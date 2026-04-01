@@ -3,7 +3,7 @@ import torch
 import numpy as np
 import cv2
 import random
-import nodes # V16 SOTA FIX: Importa o motor Core do ComfyUI
+import nodes # V16  FIX: Importa o motor Core do ComfyUI
 from dataclasses import dataclass
 from typing import List, Tuple, Dict, Optional
 
@@ -17,7 +17,7 @@ class SceneDTO:
     floor_y_percent: float
     global_scale: float
     seed: Optional[int] = None
-    original_characters: Optional[List['CharacterDTO']] = None # V28 SOTA FIX (Tipagem Correta)
+    original_characters: Optional[List['CharacterDTO']] = None # V28  FIX (Tipagem Correta)
 
 @dataclass
 class CharacterDTO:
@@ -47,7 +47,7 @@ POSE_PAIRS = [
 ]
 
 # ==========================================
-# 2. Biometric Engine & Factory (V7 SOTA)
+# 2. Biometric Engine & Factory (V7 )
 # ==========================================
 class BiometricFactory:
     """Factory Pattern to generate parametric bone structures with Ground Truth kinetics."""
@@ -67,14 +67,14 @@ class BiometricFactory:
         total_pixels = int(base_height * rel_h)
         head_pixels = int(total_pixels / h_ratio)
         
-        # V13 SOTA FIX: Shoulders 1.55x, Hips 0.7x of shoulders (anatomical base)
+        # V13  FIX: Shoulders 1.55x, Hips 0.7x of shoulders (anatomical base)
         shoulder_width = int(head_pixels * 1.55 * w_mod)
         hip_width = int(shoulder_width * 0.70)
         
         arm_len = int(total_pixels * 0.4)
         leg_len = int(total_pixels * 0.5)
 
-        # V13 SOTA FIX: Baby specific proportions (short legs, narrow shoulders)
+        # V13  FIX: Baby specific proportions (short legs, narrow shoulders)
         if char.age_group == "baby":
             shoulder_width = int(head_pixels * 1.15 * w_mod)
             hip_width = int(shoulder_width * 0.80)
@@ -110,7 +110,7 @@ class BiometricFactory:
             
         # --- Stage 1: Core & Curved Spine ---
         if char.parent_id and parent_kps:
-            # V23 SOTA FIX: Perfil Estrito com Amputação Paramétrica Limpa
+            # V23  FIX: Perfil Estrito com Amputação Paramétrica Limpa
             is_left_hip = getattr(char, "_is_left_hip", True)
 
             hip_idx = 11 if is_left_hip else 8
@@ -159,7 +159,7 @@ class BiometricFactory:
         # --- Shoulders ---
         shoulder_drop = int(hh * 0.05) 
         if char.parent_id:
-            # V23 SOTA FIX: Amputação do ombro oculto
+            # V23  FIX: Amputação do ombro oculto
             is_left_hip = getattr(char, "_is_left_hip", True)
             if is_left_hip:
                 kps[5] = (kps[1][0], kps[1][1] + shoulder_drop) 
@@ -171,7 +171,7 @@ class BiometricFactory:
         
         # --- Arms ---
         if char.parent_id:
-            # V23 SOTA FIX: O braço visível abraça o adulto, o outro é amputado
+            # V23  FIX: O braço visível abraça o adulto, o outro é amputado
             is_left_hip = getattr(char, "_is_left_hip", True)
             wrap_direction = -1 if is_left_hip else 1
             arm_reach_x = int(arm_l * 0.4) * wrap_direction
@@ -194,7 +194,7 @@ class BiometricFactory:
         elif char.is_holding_baby:
             holding_left = getattr(char, "_holding_baby_on_left", True)
             
-            # V25 SOTA FIX: Braço relaxado rente ao corpo (Evita cruzar Bounding Box)
+            # V25  FIX: Braço relaxado rente ao corpo (Evita cruzar Bounding Box)
             arm_swing_relax = rng_context.uniform(0.05, 0.08) * arm_l
             
             elbow_drop_hold = int(arm_l * 0.70)
@@ -211,7 +211,7 @@ class BiometricFactory:
                 kps[6] = (kps[5][0] + int(arm_swing_relax), kps[5][1] + int(arm_l*0.5))
                 kps[7] = (kps[6][0] + int(arm_l*0.05), kps[6][1] + int(arm_l*0.5))
         else:
-            # V25 SOTA FIX: Braços rentes ao corpo no cluster
+            # V25  FIX: Braços rentes ao corpo no cluster
             arm_swing_r = rng_context.uniform(0.05, 0.08) * arm_l
             kps[3] = (kps[2][0] - int(arm_swing_r), kps[2][1] + int(arm_l*0.5))
             kps[4] = (kps[3][0] - int(arm_l*0.05), kps[3][1] + int(arm_l*0.5))
@@ -221,7 +221,7 @@ class BiometricFactory:
         
         # --- Legs ---
         if char.parent_id:
-            # V23 SOTA FIX: A perna visível "abraça" a cintura, a outra é amputada
+            # V23  FIX: A perna visível "abraça" a cintura, a outra é amputada
             is_left_hip = getattr(char, "_is_left_hip", True)
             knee_drop = int(leg_l * 0.3)
             ankle_drop = int(leg_l * 0.5)
@@ -276,13 +276,13 @@ class OpenPoseRenderer:
         for char in sorted_chars_masks:
             char_mask = np.zeros((self.scene.height, self.scene.width), dtype=np.uint8)
             
-            # V27 SOTA FIX: Mask Dilation Otimizada (Corpo magro, Cabeça gorda)
+            # V27  FIX: Mask Dilation Otimizada (Corpo magro, Cabeça gorda)
             # Reduzimos a espessura dos membros drasticamente para evitar Semantic Bleeding
             base_thickness = 50 if char.build in ["heavy", "muscular"] else 35
             if char.age_group in ["child", "baby"]:
                 base_thickness = int(base_thickness * 0.7)
 
-            # SOTA FIX: Draw Torso Volume (Solid Polygon)
+            #  FIX: Draw Torso Volume (Solid Polygon)
             if all(k in char.keypoints for k in [1, 2, 5, 8, 11]):
                 torso_pts = np.array([
                     char.keypoints[2],  # RShoulder
@@ -299,7 +299,7 @@ class OpenPoseRenderer:
                     pt2 = char.keypoints[pair[1]]
                     cv2.line(char_mask, pt1, pt2, 255, thickness=base_thickness)
             
-            # V15 SOTA FIX: Expanded Head Volume for Hair Generation
+            # V15  FIX: Expanded Head Volume for Hair Generation
             if 0 in char.keypoints:
                 head_radius = 85 if char.gender == "female" else 75
                 if char.age_group in ["child", "baby"]:
@@ -331,7 +331,7 @@ class OpenPoseRenderer:
                 color = POSE_COLORS[k]
                 cv2.circle(canvas, pt, 4, color, thickness=-1, lineType=cv2.LINE_AA)
 
-        # V28 SOTA FIX: Preservação Estrita do Índice Original (Garante que Máscara 0 = Char 1)
+        # V28  FIX: Preservação Estrita do Índice Original (Garante que Máscara 0 = Char 1)
         # Em vez de pegar a ordem bagunçada pelo Z-Buffer, iteramos o scene characters original
         mask_list = [torch.from_numpy(masks[c.char_id]).float() / 255.0 for c in self.scene.original_characters]
         masks_tensor = torch.stack(mask_list) if mask_list else torch.empty((0, self.scene.height, self.scene.width))
@@ -358,7 +358,7 @@ class DW_DynamicPoseComposer:
             }
         }
 
-    # V21 SOTA FIX: Adicionando a porta PHENOTYPES para roteamento direto à P3
+    # V21  FIX: Adicionando a porta PHENOTYPES para roteamento direto à P3
     RETURN_TYPES = ("IMAGE", "MASK", "STRING", "CONDITIONING", "CONDITIONING", "STRING")
     RETURN_NAMES = ("POSE_CANVAS", "Z_BUFFER_MASKS", "TELEMETRY_REPORT", "POSITIVE", "NEGATIVE", "PHENOTYPES")
     FUNCTION = "generate_rigs"
@@ -376,7 +376,7 @@ class DW_DynamicPoseComposer:
 
         scene_data = data.get("scene", {})
         
-        # SOTA DEBUGGING: Implement deterministic seed
+        #  DEBUGGING: Implement deterministic seed
         passed_seed = scene_data.get("seed", None)
         rng_seed = int(passed_seed) if passed_seed is not None else random.randint(0, 9999999)
         
@@ -402,7 +402,7 @@ class DW_DynamicPoseComposer:
         available_adults = [c.get("id", "unknown") for c in raw_chars if c.get("age_group", "adult") in ["adult", "elder"]]
         used_adults = set()
         
-        # V21 SOTA FIX: Lista para armazenar os fenótipos lidos do Payload JSON
+        # V21  FIX: Lista para armazenar os fenótipos lidos do Payload JSON
         phenotypes_list = []
         
         for raw_c in raw_chars:
@@ -413,7 +413,7 @@ class DW_DynamicPoseComposer:
                 build=raw_c.get("build", "regular")
             )
             
-            # V21 SOTA FIX: Extração Segura da chave "traits"
+            # V21  FIX: Extração Segura da chave "traits"
             traits = raw_c.get("traits", "").strip()
             
             # Monta a string exata que o Multiplexer (P3) espera
@@ -440,7 +440,7 @@ class DW_DynamicPoseComposer:
                 
             characters.append(char)
             
-        # V21 SOTA FIX: Junta todas as linhas de fenótipo com quebra de linha para a P3
+        # V21  FIX: Junta todas as linhas de fenótipo com quebra de linha para a P3
         phenotypes_output = "\n".join(phenotypes_list)
 
         for char in characters:
@@ -448,11 +448,11 @@ class DW_DynamicPoseComposer:
                 parent_char = next((c for c in characters if c.char_id == char.parent_id), None)
                 if parent_char:
                     parent_char.is_holding_baby = True
-                    # V22 SOTA FIX: Decide de qual lado o adulto vai segurar o bebê ANTES de desenhar
+                    # V22  FIX: Decide de qual lado o adulto vai segurar o bebê ANTES de desenhar
                     parent_char._holding_baby_on_left = rng_context.choice([True, False])
                     char._is_left_hip = parent_char._holding_baby_on_left
 
-        scene.original_characters = list(characters) # V28 SOTA FIX: Trava a ordem original
+        scene.original_characters = list(characters) # V28  FIX: Trava a ordem original
 
         # Process independent adults first, then dependent babies
         processing_order = sorted(characters, key=lambda c: c.parent_id is not None)
@@ -462,7 +462,7 @@ class DW_DynamicPoseComposer:
         # Floor anchoring lock
         floor_y = int(height * scene.floor_y_percent)
         
-        # V25 SOTA FIX: Dynamic Z-Index Oclusion Engine (Strict Hierarchy)
+        # V25  FIX: Dynamic Z-Index Oclusion Engine (Strict Hierarchy)
         # Garante sincronia perfeita entre Máscaras e Canvas
         for char in characters:
             metrics = BiometricFactory.get_metrics(char, base_h)
@@ -474,7 +474,7 @@ class DW_DynamicPoseComposer:
                 # Adultos/Crianças livres ficam no fundo
                 char.z_index = int(10000 / metrics["total_h"])
 
-        # V26 SOTA FIX: Dynamic Bounding Box with Anti-Fusion Padding
+        # V26  FIX: Dynamic Bounding Box with Anti-Fusion Padding
         independent_chars = [c for c in processing_order if not c.parent_id]
         dependent_chars = [c for c in processing_order if c.parent_id]
         
@@ -485,7 +485,7 @@ class DW_DynamicPoseComposer:
         for char in independent_chars:
             metrics = BiometricFactory.get_metrics(char, base_h)
             
-            # V27 SOTA FIX: Aumento do Distanciamento Paramétrico
+            # V27  FIX: Aumento do Distanciamento Paramétrico
             # Adultos recebem 75% de folga extra; crianças 40%
             spacing_factor = 0.75 if char.age_group in ["adult", "elder", "teenager"] else 0.40
             personal_space = int(metrics["shoulder_w"] * spacing_factor)
@@ -544,7 +544,7 @@ class DW_DynamicPoseComposer:
         pose_keypoint_str = json.dumps([{"people": people, "canvas_height": height, "canvas_width": width}])
 
         # =========================================================
-        # V18 SOTA FIX: Telemetry, Wardrobe & BG Masking
+        # V18 FIX: Telemetry, Wardrobe & BG Masking
         # =========================================================
         clip_encoder = nodes.CLIPTextEncode()
         cond_set_mask = nodes.ConditioningSetMask()
@@ -554,11 +554,11 @@ class DW_DynamicPoseComposer:
         global_pos_cond_raw, = clip_encoder.encode(clip, global_positive)
         global_neg_cond, = clip_encoder.encode(clip, global_negative)
         
-        # V18 SOTA FIX: Tranca do Fundo Branco (Background Isolation)
+        # V18 FIX: Tranca do Fundo Branco (Background Isolation)
         bg_mask_tensor_unsqueeze = bg_mask_tensor.unsqueeze(0)
         final_pos_cond, = cond_set_mask.append(global_pos_cond_raw, bg_mask_tensor_unsqueeze, "default", 1.0)
 
-        # V19 SOTA FIX: Color-Coded Wardrobe (Anti-Cloning & No Replacement)
+        # V19 FIX: Color-Coded Wardrobe (Anti-Cloning & No Replacement)
         outfits = {
             "man": ["wearing a burgundy knit sweater and dark trousers", "wearing a mustard yellow polo shirt and chinos", "wearing a forest green casual button-down shirt and jeans", "wearing a rust colored t-shirt and a light jacket"],
             "woman": ["wearing a crimson chic blouse and denim pants", "wearing an emerald green elegant midi dress", "wearing a burnt orange sleeveless top and wide-leg trousers", "wearing a bright yellow casual cardigan and jeans"],
@@ -575,7 +575,7 @@ class DW_DynamicPoseComposer:
             active_wardrobe[k] = shuffled
 
         telemetry_lines = [
-            "# 📊 SOTA TELEMETRY REPORT",
+            "# 📊  TELEMETRY REPORT",
             f"**Seed:** `{rng_seed}`",
             "---",
             f"### 🌍 GLOBAL PROMPTS",
@@ -606,7 +606,7 @@ class DW_DynamicPoseComposer:
                 
             action_context = "being carried in arms" if char.parent_id else ("crawling on the floor" if char.age_group == "baby" else "standing")
             
-            # V21 SOTA FIX: Adicionado o age_group explicitamente no prompt base da P2
+            # V21 FIX: Adicionado o age_group explicitamente no prompt base da P2
             regional_text = f"A photorealistic {char.age_group}, {char.build} build {noun.replace('baby ', '')}, {char_outfit}, {action_context}"
             
             telemetry_lines.append(f"- **{char.char_id}** ({char.age_group}/{char.gender}): `{regional_text}`")
@@ -625,7 +625,7 @@ class DW_DynamicPoseComposer:
         
         telemetry_report_str = "\n".join(telemetry_lines)
 
-        # V21 SOTA FIX: Retornando phenotypes_output na 6ª posição
+        # V21 FIX: Retornando phenotypes_output na 6ª posição
         return (pose_canvas_tensor, masks_tensor, telemetry_report_str, final_pos_cond, global_neg_cond, phenotypes_output)
 
 # Registration
@@ -633,5 +633,5 @@ NODE_CLASS_MAPPINGS = {
     "DW_DynamicPoseComposer": DW_DynamicPoseComposer
 }
 NODE_DISPLAY_NAME_MAPPINGS = {
-    "DW_DynamicPoseComposer": "DW Dynamic Pose Composer SOTA"
+    "DW_DynamicPoseComposer": "DW Dynamic Pose Composer"
 }
