@@ -91,3 +91,5 @@ class DW_QwenBatchExtractor:
         # 3. Aggregate outputs with the exact delimiter expected by DW_DynamicPoseComposer
         aggregated_string = " | ".join(results)
         return (aggregated_string,)
+NODE_CLASS_MAPPINGS = {"DW_QwenBatchExtractor": DW_QwenBatchExtractor}
+NODE_DISPLAY_NAME_MAPPINGS = {"DW_QwenBatchExtractor": "DW Qwen Batch Extractor"}
