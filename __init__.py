@@ -1,7 +1,16 @@
-from .dw_pose_composer import NODE_CLASS_MAPPINGS as P2_MAPPINGS, NODE_DISPLAY_NAME_MAPPINGS as P2_NAMES
-from .dw_identity_multiplexer import NODE_CLASS_MAPPINGS as P3_MAPPINGS, NODE_DISPLAY_NAME_MAPPINGS as P3_NAMES
+from .dw_pose_composer import NODE_CLASS_MAPPINGS as pose_mappings
+from .dw_pose_composer import NODE_DISPLAY_NAME_MAPPINGS as pose_names
+from .dw_identity_multiplexer import NODE_CLASS_MAPPINGS as id_mappings
+from .dw_identity_multiplexer import NODE_DISPLAY_NAME_MAPPINGS as id_names
 
-NODE_CLASS_MAPPINGS = {**P2_MAPPINGS, **P3_MAPPINGS}
-NODE_DISPLAY_NAME_MAPPINGS = {**P2_NAMES, **P3_NAMES}
+NODE_CLASS_MAPPINGS = {
+    **pose_mappings,
+    **id_mappings
+}
 
-__all__ = ['NODE_CLASS_MAPPINGS', 'NODE_DISPLAY_NAME_MAPPINGS']
+NODE_DISPLAY_NAME_MAPPINGS = {
+    **pose_names,
+    **id_names
+}
+
+__all__ = ["NODE_CLASS_MAPPINGS", "NODE_DISPLAY_NAME_MAPPINGS"]
