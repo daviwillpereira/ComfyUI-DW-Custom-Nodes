@@ -345,28 +345,28 @@ class OpenPoseRenderer:
 # 3.5. Qwen-VL NLP Parser
 # ==========================================
 def parse_qwen_phenotypes(qwen_string: str) -> dict:
-    """Parses Qwen-VL comma-separated output into a strict biometric dictionary."""
     parts = [p.strip().lower() for p in qwen_string.split(',')]
-    
     data = {
-        "gender": "male", "age_group": "adult", "build": "regular",
+        "gender": "male", "age_group": "adult", "exact_age": "30 years old",
+        "build_cat": "regular", "exact_build": "average build",
         "skin": "natural skin", "hair": "simple hair", "eyes": "brown eyes",
-        "beard": "no beard", "glasses": "no"
+        "beard": "no beard", "glasses": "no", "outfit": "modern stylish casual clothes"
     }
-    
     try:
-        if len(parts) >= 8:
+        if len(parts) >= 11:
             data["gender"] = parts[0]
             data["age_group"] = parts[1] if parts[1] in ["baby", "child", "teenager", "adult", "elder"] else "adult"
-            data["build"] = parts[2] if parts[2] in ["slim", "regular", "heavy", "muscular"] else "regular"
-            data["skin"] = parts[3]
-            data["hair"] = parts[4]
-            data["eyes"] = parts[5]
-            data["beard"] = parts[6]
-            data["glasses"] = parts[7]
+            data["exact_age"] = parts[2]
+            data["build_cat"] = parts[3] if parts[3] in ["slim", "regular", "heavy", "muscular"] else "regular"
+            data["exact_build"] = parts[4]
+            data["skin"] = parts[5]
+            data["hair"] = parts[6]
+            data["eyes"] = parts[7]
+            data["beard"] = parts[8]
+            data["glasses"] = parts[9]
+            data["outfit"] = parts[10]
     except Exception as e:
         print(f"[DW_WARN] Qwen Parser failed, using defaults: {e}")
-        
     return data
 
 # ==========================================
@@ -380,13 +380,12 @@ class DW_DynamicPoseComposer:
             "required": {
                 "width": ("INT", {"default": 1024, "min": 512, "max": 4096, "step": 8}),
                 "height": ("INT", {"default": 1024, "min": 512, "max": 4096, "step": 8}),
+                "floor_y_percent": ("FLOAT", {"default": 0.85, "min": 0.5, "max": 1.0, "step": 0.01}),
+                "global_scale": ("FLOAT", {"default": 0.70, "min": 0.3, "max": 2.0, "step": 0.01}),
+                "vision_context": ("STRING", {"forceInput": True, "multiline": True}),
                 "clip": ("CLIP",),
                 "global_positive": ("STRING", {"multiline": True, "default": "RAW photo, 8k uhd, dslr"}),
                 "global_negative": ("STRING", {"multiline": True, "default": "deformed, bad anatomy"}),
-                "payload_json": ("STRING", {"multiline": True, "dynamicPrompts": False}),
-            },
-            "optional": {
-                "vision_context": ("STRING", {"forceInput": True, "multiline": True, "default": ""}),
             }
         }
 
@@ -395,66 +394,50 @@ class DW_DynamicPoseComposer:
     FUNCTION = "generate_rigs"
     CATEGORY = "DW_Nodes/Pose"
 
-    def generate_rigs(self, width: int, height: int, clip, global_positive: str, global_negative: str, payload_json: str, vision_context: str = ""):
-        try:
-            data = json.loads(payload_json)
-        except json.JSONDecodeError:
-            raise ValueError("[DW] Critical Error: Payload JSON is corrupted.")
-
-        scene_data = data.get("scene", {})
+    def generate_rigs(self, width: int, height: int, floor_y_percent: float, global_scale: float, vision_context: str, clip, global_positive: str, global_negative: str):
         
-        # Emmanuel Scope: Maximum Entropy. Always generate a random seed per API call.
+        vision_strings = [s.strip() for s in vision_context.split('|') if s.strip()]
+        num_characters = len(vision_strings)
+        
+        if num_characters == 0:
+            raise ValueError("[DW] Critical Error: vision_context is empty. Connect the DW Qwen Batch Extractor.")
+
         rng_seed = random.randint(0, 9999999)
         rng_context = random.Random(rng_seed)
 
         scene = SceneDTO(
             width=width, height=height,
-            floor_y_percent=float(scene_data.get("floor_y_percent", 0.85)),
-            global_scale=float(scene_data.get("global_scale", 1.0)),
+            floor_y_percent=floor_y_percent,
+            global_scale=global_scale,
             seed=rng_seed
         )
 
         characters = []
-        raw_chars = data.get("characters", [])
-        
-        # Split aggregated Qwen-VL vision contexts
-        vision_strings = [s.strip() for s in vision_context.split('|') if s.strip()] if vision_context else []
         phenotypes_list = []
         
-        # Count available adults for baby handling based on Vision Data
         available_adults = []
-        for i, raw_c in enumerate(raw_chars):
-            v_data = parse_qwen_phenotypes(vision_strings[i]) if i < len(vision_strings) else None
-            age = v_data["age_group"] if v_data else "adult"
-            if age in ["adult", "elder"]:
-                available_adults.append(raw_c.get("id", f"char_{i}"))
+        for i in range(num_characters):
+            v_data = parse_qwen_phenotypes(vision_strings[i])
+            if v_data["age_group"] in ["adult", "elder"]:
+                available_adults.append(f"person_{i}")
                 
         used_adults = set()
         
-        for i, raw_c in enumerate(raw_chars):
-            # Dynamic Context Injection from Qwen
-            vqa_data = parse_qwen_phenotypes(vision_strings[i]) if i < len(vision_strings) else None
-            
-            final_gender = vqa_data["gender"] if vqa_data else raw_c.get("gender", "male")
-            final_age = vqa_data["age_group"] if vqa_data else raw_c.get("age_group", "adult")
-            final_build = vqa_data["build"] if vqa_data else raw_c.get("build", "regular")
+        for i in range(num_characters):
+            v_data = parse_qwen_phenotypes(vision_strings[i])
             
             char = CharacterDTO(
-                char_id=raw_c.get("id", f"char_{i}"), 
-                gender=final_gender,
-                age_group=final_age, 
-                build=final_build
+                char_id=f"person_{i}", 
+                gender=v_data["gender"],
+                age_group=v_data["age_group"], 
+                build=v_data["build_cat"]
             )
             
-            # Phenotype Construction for Phase 2 (Multiplexer)
-            if vqa_data:
-                glasses_trait = ", wearing glasses" if "no" not in vqa_data["glasses"] else ""
-                beard_trait = f", {vqa_data['beard']}" if "no" not in vqa_data['beard'] else ""
-                traits = f"{vqa_data['skin']}, {vqa_data['hair']}, {vqa_data['eyes']}{beard_trait}{glasses_trait}"
-            else:
-                traits = raw_c.get("traits", "").strip()
+            glasses = ", wearing glasses" if "no" not in v_data["glasses"] else ""
+            beard = f", {v_data['beard']}" if "no" not in v_data['beard'] else ""
+            traits = f"{v_data['skin']}, {v_data['hair']}, {v_data['eyes']}{beard}{glasses}"
                 
-            phenotype_line = f"{char.age_group} {char.gender}, {traits}" if traits else f"{char.age_group} {char.gender}"
+            phenotype_line = f"{char.age_group} {char.gender}, {traits}"
             phenotypes_list.append(phenotype_line)
             
             if char.age_group == "baby":
@@ -578,29 +561,11 @@ class DW_DynamicPoseComposer:
         cond_set_mask = nodes.ConditioningSetMask()
         cond_combine = nodes.ConditioningCombine()
 
-        # 1. Encode Global Prompts (Fundo e Estilo)
         global_pos_cond_raw, = clip_encoder.encode(clip, global_positive)
         global_neg_cond, = clip_encoder.encode(clip, global_negative)
         
-        # V18 FIX: Tranca do Fundo Branco (Background Isolation)
         bg_mask_tensor_unsqueeze = bg_mask_tensor.unsqueeze(0)
         final_pos_cond, = cond_set_mask.append(global_pos_cond_raw, bg_mask_tensor_unsqueeze, "default", 1.0)
-
-        # V19 FIX: Color-Coded Wardrobe (Anti-Cloning & No Replacement)
-        outfits = {
-            "man": ["wearing a burgundy knit sweater and dark trousers", "wearing a mustard yellow polo shirt and chinos", "wearing a forest green casual button-down shirt and jeans", "wearing a rust colored t-shirt and a light jacket"],
-            "woman": ["wearing a crimson chic blouse and denim pants", "wearing an emerald green elegant midi dress", "wearing a burnt orange sleeveless top and wide-leg trousers", "wearing a bright yellow casual cardigan and jeans"],
-            "boy": ["wearing a bright red graphic t-shirt and shorts", "wearing a lime green comfortable hoodie and jeans", "wearing a vibrant orange striped shirt and chinos"],
-            "girl": ["wearing a bright pink floral dress", "wearing a teal casual t-shirt and denim skirt", "wearing a yellow colorful sweater and leggings"],
-            "baby": ["wearing a cozy mint green pastel baby romper", "wearing a comfortable bright red cotton onesie", "wearing a cute lavender baby overall"]
-        }
-
-        # Shuffle para garantir que não haverá roupas clonadas no mesmo Batch
-        active_wardrobe = {}
-        for k, v_list in outfits.items():
-            shuffled = list(v_list)
-            rng_context.shuffle(shuffled)
-            active_wardrobe[k] = shuffled
 
         telemetry_lines = [
             "# 📊  TELEMETRY REPORT",
@@ -613,7 +578,6 @@ class DW_DynamicPoseComposer:
             "### 👤 REGIONAL PROMPTS (Multiplexed)"
         ]
 
-        # 2. Iterar e multiplexar Prompts Regionais
         for i, char in enumerate(characters):
             noun = "person"
             if char.gender == "male":
@@ -621,27 +585,31 @@ class DW_DynamicPoseComposer:
             else:
                 noun = "woman" if char.age_group in ["adult", "elder"] else "girl"
             
-            outfit_key = noun
             if char.age_group == "baby":
-                noun = f"baby {noun}"
-                outfit_key = "baby"
+                noun = "baby"
                 
-            # Extrai e remove a roupa para evitar duplicação (Fallback genérico se a lista esvaziar)
-            if active_wardrobe[outfit_key]:
-                char_outfit = active_wardrobe[outfit_key].pop()
+            action_context = "being carried in arms" if char.parent_id else ("crawling on the floor" if char.age_group == "baby" else "standing, dynamic cinematic pose")
+            
+            # Resgatamos os dados diretos do Qwen parseados anteriormente
+            v_data = parse_qwen_phenotypes(vision_strings[i]) if i < len(vision_strings) else None
+            
+            if v_data:
+                glasses = ", wearing glasses" if "no" not in v_data["glasses"] else ""
+                beard = f", {v_data['beard']}" if "no" not in v_data['beard'] else ""
+                traits = f"{v_data['skin']}, {v_data['hair']}, {v_data['eyes']}{beard}{glasses}"
+                exact_age = v_data["exact_age"]
+                exact_build = v_data["exact_build"]
+                outfit = v_data["outfit"]
             else:
-                char_outfit = "wearing bright colored casual clothes"
-                
-            action_context = "being carried in arms" if char.parent_id else ("crawling on the floor" if char.age_group == "baby" else "standing")
+                traits, exact_age, exact_build, outfit = "detailed face", "adult", "regular build", "stylish casual clothes"
             
-            # V21 FIX: Adicionado o age_group explicitamente no prompt base da P2
-            regional_text = f"A photorealistic {char.age_group}, {char.build} build {noun.replace('baby ', '')}, {char_outfit}, {action_context}"
+            # Prompt Regional SOTA: Idade exata, corpo cru, todas as traits e outfit do Qwen
+            regional_text = f"A photorealistic {exact_age} {exact_build} {noun}, {traits}, wearing {outfit}, {action_context}, cinematic lighting"
             
-            telemetry_lines.append(f"- **{char.char_id}** ({char.age_group}/{char.gender}): `{regional_text}`")
+            telemetry_lines.append(f"- **{char.char_id}**: `{regional_text}`")
             
             reg_cond, = clip_encoder.encode(clip, regional_text)
             char_mask = masks_tensor[i].unsqueeze(0)
-            
             masked_reg_cond, = cond_set_mask.append(reg_cond, char_mask, "default", 1.0)
             final_pos_cond, = cond_combine.combine(final_pos_cond, masked_reg_cond)
 
@@ -653,9 +621,8 @@ class DW_DynamicPoseComposer:
         
         telemetry_report_str = "\n".join(telemetry_lines)
 
-        # V21 FIX: Retornando phenotypes_output na 6ª posição
         return (pose_canvas_tensor, masks_tensor, telemetry_report_str, final_pos_cond, global_neg_cond, phenotypes_output)
-
+    
 # Registration
 NODE_CLASS_MAPPINGS = {
     "DW_DynamicPoseComposer": DW_DynamicPoseComposer
