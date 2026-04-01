@@ -350,25 +350,26 @@ class DW_DynamicPoseComposer:
     def INPUT_TYPES(cls):
         return {
             "required": {
-                "background_image": ("IMAGE",),
+                "width": ("INT", {"default": 1024, "min": 512, "max": 4096, "step": 8}),
+                "height": ("INT", {"default": 1024, "min": 512, "max": 4096, "step": 8}),
                 "clip": ("CLIP",),
                 "global_positive": ("STRING", {"multiline": True, "default": "RAW photo, 8k uhd, dslr, soft lighting, high quality, film grain, Fujifilm XT4, highly detailed"}),
-                "global_negative": ("STRING", {"multiline": True, "default": "deformed, bad anatomy, disfigured, poorly drawn face, mutation, mutated, extra limb, ugly, disgusting, poorly drawn hands, missing limb, floating limbs, disconnected limbs, malformed hands, blurry, ((((mutated hands and fingers)))), watermark, watermarked, oversaturated, cgi, 3d, render, sketch, cartoon, drawing, anime, text, close up, cropped, out of frame, worst quality, low quality, jpeg artifacts, ugly, duplicate, morbid, mutilated, extra fingers, mutated hands, poorly drawn hands, poorly drawn face, mutation, deformed, blurry, dehydrated, bad anatomy, bad proportions, extra limbs, cloned face, disfigured, gross proportions, malformed limbs, missing arms, missing legs, extra arms, extra legs, fused fingers, too many fingers, long neck"}),
+                "global_negative": ("STRING", {"multiline": True, "default": "deformed, bad anatomy, disfigured, poorly drawn face, mutation, mutated, extra limb, ugly, disgusting, poorly drawn hands, missing limb, floating limbs, disconnected limbs, malformed hands, blurry, watermark, watermarked, oversaturated, cgi, 3d, render, sketch, cartoon, drawing, anime, text, close up, cropped, out of frame, worst quality, low quality, jpeg artifacts, ugly, duplicate, morbid, mutilated, extra fingers, mutated hands, poorly drawn hands, poorly drawn face, mutation, deformed, blurry, dehydrated, bad anatomy, bad proportions, extra limbs, cloned face, disfigured, gross proportions, malformed limbs, missing arms, missing legs, extra arms, extra legs, fused fingers, too many fingers, long neck"}),
                 "payload_json": ("STRING", {"multiline": True, "dynamicPrompts": False}),
+            },
+            "optional": {
+                "vision_context": ("STRING", {"forceInput": True, "multiline": True, "default": ""}),
             }
         }
 
-    # V21  FIX: Adicionando a porta PHENOTYPES para roteamento direto à P3
     RETURN_TYPES = ("IMAGE", "MASK", "STRING", "CONDITIONING", "CONDITIONING", "STRING")
     RETURN_NAMES = ("POSE_CANVAS", "Z_BUFFER_MASKS", "TELEMETRY_REPORT", "POSITIVE", "NEGATIVE", "PHENOTYPES")
     FUNCTION = "generate_rigs"
     CATEGORY = "DW_Nodes/Pose"
 
-    def generate_rigs(self, background_image: torch.Tensor, clip, global_positive: str, global_negative: str, payload_json: str):
-        # Inherit dimensions from Phase 1 Tensor
-        _, height, width, _ = background_image.shape
+    def generate_rigs(self, width: int, height: int, clip, global_positive: str, global_negative: str, payload_json: str, vision_context: str = ""):
+        # Dimension derivation removed. Using explicit width and height inputs.
         
-        # Shielding against invalid Frontend payloads
         try:
             data = json.loads(payload_json)
         except json.JSONDecodeError:
