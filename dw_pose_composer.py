@@ -342,6 +342,34 @@ class OpenPoseRenderer:
         return canvas, masks_tensor, bg_mask_tensor
 
 # ==========================================
+# 3.5. Qwen-VL NLP Parser
+# ==========================================
+def parse_qwen_phenotypes(qwen_string: str) -> dict:
+    """Parses Qwen-VL comma-separated output into a strict biometric dictionary."""
+    parts = [p.strip().lower() for p in qwen_string.split(',')]
+    
+    data = {
+        "gender": "male", "age_group": "adult", "build": "regular",
+        "skin": "natural skin", "hair": "simple hair", "eyes": "brown eyes",
+        "beard": "no beard", "glasses": "no"
+    }
+    
+    try:
+        if len(parts) >= 8:
+            data["gender"] = parts[0]
+            data["age_group"] = parts[1] if parts[1] in ["baby", "child", "teenager", "adult", "elder"] else "adult"
+            data["build"] = parts[2] if parts[2] in ["slim", "regular", "heavy", "muscular"] else "regular"
+            data["skin"] = parts[3]
+            data["hair"] = parts[4]
+            data["eyes"] = parts[5]
+            data["beard"] = parts[6]
+            data["glasses"] = parts[7]
+    except Exception as e:
+        print(f"[DW_WARN] Qwen Parser failed, using defaults: {e}")
+        
+    return data
+
+# ==========================================
 # 4. Main ComfyUI Node
 # ==========================================
 class DW_DynamicPoseComposer:
@@ -353,8 +381,8 @@ class DW_DynamicPoseComposer:
                 "width": ("INT", {"default": 1024, "min": 512, "max": 4096, "step": 8}),
                 "height": ("INT", {"default": 1024, "min": 512, "max": 4096, "step": 8}),
                 "clip": ("CLIP",),
-                "global_positive": ("STRING", {"multiline": True, "default": "RAW photo, 8k uhd, dslr, soft lighting, high quality, film grain, Fujifilm XT4, highly detailed"}),
-                "global_negative": ("STRING", {"multiline": True, "default": "deformed, bad anatomy, disfigured, poorly drawn face, mutation, mutated, extra limb, ugly, disgusting, poorly drawn hands, missing limb, floating limbs, disconnected limbs, malformed hands, blurry, watermark, watermarked, oversaturated, cgi, 3d, render, sketch, cartoon, drawing, anime, text, close up, cropped, out of frame, worst quality, low quality, jpeg artifacts, ugly, duplicate, morbid, mutilated, extra fingers, mutated hands, poorly drawn hands, poorly drawn face, mutation, deformed, blurry, dehydrated, bad anatomy, bad proportions, extra limbs, cloned face, disfigured, gross proportions, malformed limbs, missing arms, missing legs, extra arms, extra legs, fused fingers, too many fingers, long neck"}),
+                "global_positive": ("STRING", {"multiline": True, "default": "RAW photo, 8k uhd, dslr"}),
+                "global_negative": ("STRING", {"multiline": True, "default": "deformed, bad anatomy"}),
                 "payload_json": ("STRING", {"multiline": True, "dynamicPrompts": False}),
             },
             "optional": {
@@ -368,29 +396,19 @@ class DW_DynamicPoseComposer:
     CATEGORY = "DW_Nodes/Pose"
 
     def generate_rigs(self, width: int, height: int, clip, global_positive: str, global_negative: str, payload_json: str, vision_context: str = ""):
-        # Dimension derivation removed. Using explicit width and height inputs.
-        
         try:
             data = json.loads(payload_json)
         except json.JSONDecodeError:
-            raise ValueError("[DW] Critical Error: Payload JSON is corrupted or poorly formatted.")
+            raise ValueError("[DW] Critical Error: Payload JSON is corrupted.")
 
         scene_data = data.get("scene", {})
         
-        #  DEBUGGING: Implement deterministic seed
-        passed_seed = scene_data.get("seed", None)
-        rng_seed = int(passed_seed) if passed_seed is not None else random.randint(0, 9999999)
-        
-        print(f"--- [DW] Spawning Family (Deterministic Debugging) ---")
-        print(f"[DW] Generation Seed: {rng_seed} (Pass this in JSON 'scene.seed' to reproduce poses)")
-        
-        # Create a local RNG context
+        # Emmanuel Scope: Maximum Entropy. Always generate a random seed per API call.
+        rng_seed = random.randint(0, 9999999)
         rng_context = random.Random(rng_seed)
 
-        # Defensive Type Casting
         scene = SceneDTO(
-            width=width, 
-            height=height,
+            width=width, height=height,
             floor_y_percent=float(scene_data.get("floor_y_percent", 0.85)),
             global_scale=float(scene_data.get("global_scale", 1.0)),
             seed=rng_seed
@@ -399,49 +417,58 @@ class DW_DynamicPoseComposer:
         characters = []
         raw_chars = data.get("characters", [])
         
-        # Safety lookup for available adults to handle multiple babies
-        available_adults = [c.get("id", "unknown") for c in raw_chars if c.get("age_group", "adult") in ["adult", "elder"]]
-        used_adults = set()
-        
-        # V21  FIX: Lista para armazenar os fenótipos lidos do Payload JSON
+        # Split aggregated Qwen-VL vision contexts
+        vision_strings = [s.strip() for s in vision_context.split('|') if s.strip()] if vision_context else []
         phenotypes_list = []
         
-        for raw_c in raw_chars:
+        # Count available adults for baby handling based on Vision Data
+        available_adults = []
+        for i, raw_c in enumerate(raw_chars):
+            v_data = parse_qwen_phenotypes(vision_strings[i]) if i < len(vision_strings) else None
+            age = v_data["age_group"] if v_data else "adult"
+            if age in ["adult", "elder"]:
+                available_adults.append(raw_c.get("id", f"char_{i}"))
+                
+        used_adults = set()
+        
+        for i, raw_c in enumerate(raw_chars):
+            # Dynamic Context Injection from Qwen
+            vqa_data = parse_qwen_phenotypes(vision_strings[i]) if i < len(vision_strings) else None
+            
+            final_gender = vqa_data["gender"] if vqa_data else raw_c.get("gender", "male")
+            final_age = vqa_data["age_group"] if vqa_data else raw_c.get("age_group", "adult")
+            final_build = vqa_data["build"] if vqa_data else raw_c.get("build", "regular")
+            
             char = CharacterDTO(
-                char_id=raw_c.get("id", "unknown"), 
-                gender=raw_c.get("gender", "male"),
-                age_group=raw_c.get("age_group", "adult"), 
-                build=raw_c.get("build", "regular")
+                char_id=raw_c.get("id", f"char_{i}"), 
+                gender=final_gender,
+                age_group=final_age, 
+                build=final_build
             )
             
-            # V21  FIX: Extração Segura da chave "traits"
-            traits = raw_c.get("traits", "").strip()
-            
-            # Monta a string exata que o Multiplexer (P3) espera
-            if traits:
-                phenotype_line = f"{char.age_group} {char.gender}, {traits}"
+            # Phenotype Construction for Phase 2 (Multiplexer)
+            if vqa_data:
+                glasses_trait = ", wearing glasses" if "no" not in vqa_data["glasses"] else ""
+                beard_trait = f", {vqa_data['beard']}" if "no" not in vqa_data['beard'] else ""
+                traits = f"{vqa_data['skin']}, {vqa_data['hair']}, {vqa_data['eyes']}{beard_trait}{glasses_trait}"
             else:
-                # Fallback de segurança se o Front-end esquecer de mandar a chave
-                phenotype_line = f"{char.age_group} {char.gender}"
+                traits = raw_c.get("traits", "").strip()
                 
+            phenotype_line = f"{char.age_group} {char.gender}, {traits}" if traits else f"{char.age_group} {char.gender}"
             phenotypes_list.append(phenotype_line)
             
-            # Stateful Auto-Parenting Rule with Fallback Crawling/Toddler
             if char.age_group == "baby":
                 free_adults = [a for a in available_adults if a not in used_adults]
                 if free_adults:
-                    # Adult available: Baby is carried
                     char.z_index = 2
                     char.parent_id = free_adults[0]
                     used_adults.add(free_adults[0])
                 else:
-                    # FALLBACK: No adults available. Baby goes to the floor (crawling).
                     char.parent_id = None
                     char.z_index = 1
                 
             characters.append(char)
             
-        # V21  FIX: Junta todas as linhas de fenótipo com quebra de linha para a P3
         phenotypes_output = "\n".join(phenotypes_list)
 
         for char in characters:
