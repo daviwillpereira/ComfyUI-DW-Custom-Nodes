@@ -616,8 +616,7 @@ class DW_DynamicPoseComposer:
                 
             action_context = "being carried in arms" if char.parent_id else ("crawling on the floor" if char.age_group == "baby" else "standing, dynamic cinematic pose")
             
-            # Resgatamos os dados diretos do Qwen parseados anteriormente
-            v_data = parse_qwen_phenotypes(vision_strings[i]) if i < len(vision_strings) else None
+            v_data = parsed_chars_data[i] if i < len(parsed_chars_data) else None
             
             if v_data:
                 glasses = ", wearing glasses" if "no" not in v_data["glasses"] else ""
@@ -628,7 +627,7 @@ class DW_DynamicPoseComposer:
                 outfit = v_data["outfit"]
             else:
                 traits, exact_age, exact_build, outfit = "detailed face", "adult", "regular build", "stylish casual clothes"
-            
+                
             # Remove "wearing" if Qwen included it to prevent duplication
             clean_outfit = outfit.replace("wearing ", "").strip()
             
