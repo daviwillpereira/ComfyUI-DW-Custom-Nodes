@@ -344,29 +344,43 @@ class OpenPoseRenderer:
 # ==========================================
 # 3.5. Qwen-VL NLP Parser
 # ==========================================
+import json
+import re
+
 def parse_qwen_phenotypes(qwen_string: str) -> dict:
-    parts = [p.strip().lower() for p in qwen_string.split(',')]
     data = {
         "gender": "male", "age_group": "adult", "exact_age": "30 years old",
         "build_cat": "regular", "exact_build": "average build",
         "skin": "natural skin", "hair": "simple hair", "eyes": "brown eyes",
-        "beard": "no beard", "glasses": "no", "outfit": "modern stylish casual clothes"
+        "beard": "no beard", "glasses": "no glasses", "outfit": "modern stylish casual clothes"
     }
     try:
-        if len(parts) >= 11:
-            data["gender"] = parts[0]
-            data["age_group"] = parts[1] if parts[1] in ["baby", "child", "teenager", "adult", "elder"] else "adult"
-            data["exact_age"] = parts[2]
-            data["build_cat"] = parts[3] if parts[3] in ["slim", "regular", "heavy", "muscular"] else "regular"
-            data["exact_build"] = parts[4]
-            data["skin"] = parts[5]
-            data["hair"] = parts[6]
-            data["eyes"] = parts[7]
-            data["beard"] = parts[8]
-            data["glasses"] = parts[9]
-            data["outfit"] = parts[10]
+        clean_str = re.sub(r'\s*```$', '', clean_str).strip()
+        parsed = json.loads(clean_str)
+        
+        data["gender"] = parsed.get("gender", data["gender"]).lower()
+        
+        age_group = parsed.get("age_group", "").lower()
+        data["age_group"] = age_group if age_group in ["baby", "child", "teenager", "adult", "elder"] else data["age_group"]
+        
+        data["exact_age"] = parsed.get("exact_age", data["exact_age"]).lower()
+        
+        build_cat = parsed.get("build_cat", "").lower()
+        data["build_cat"] = build_cat if build_cat in ["slim", "regular", "heavy", "muscular"] else data["build_cat"]
+        
+        data["exact_build"] = parsed.get("exact_build", data["exact_build"]).lower()
+        data["skin"] = parsed.get("skin", data["skin"]).lower()
+        data["hair"] = parsed.get("hair", data["hair"]).lower()
+        data["eyes"] = parsed.get("eyes", data["eyes"]).lower()
+        data["beard"] = parsed.get("beard", data["beard"]).lower()
+        data["glasses"] = parsed.get("glasses", data["glasses"]).lower()
+        data["outfit"] = parsed.get("outfit", data["outfit"]).lower()
+
+    except json.JSONDecodeError as e:
+        print(f"[DW_WARN] JSON Parser failed: {e}. Faulty String: {qwen_string}")
     except Exception as e:
-        print(f"[DW_WARN] Qwen Parser failed, using defaults: {e}")
+        print(f"[DW_WARN] Unexpected Error parsing Phenotypes: {e}")
+        
     return data
 
 # ==========================================

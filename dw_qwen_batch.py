@@ -24,12 +24,12 @@ class DW_QwenBatchExtractor:
                 "images": ("IMAGE",),
                 "question": ("STRING", {
                     "multiline": True, 
-                    "default": "Analyze the person and output strictly a comma-separated list answering these parameters in order:\n1. Gender\n2. Age group (choose: baby, child, teenager, adult, elder)\n3. Body build (choose: slim, regular, heavy, muscular)\n4. Skin tone\n5. Hair color and style\n6. Eye color\n7. Beard style and color (or 'no beard')\n8. Wearing glasses (choose: 'no', 'prescription', 'sunglasses')\n\nOutput format example: male, adult, heavy, dark skin, black dreadlocks, brown eyes, full black beard, no\nDo not include any other text."
+                    "default": "Analyze the person and output STRICTLY a valid JSON object. Do not include markdown formatting, code blocks, or any conversational text.\n\nRequired JSON keys:\n\"gender\" (string)\n\"age_group\" (choose: baby, child, teenager, adult, elder)\n\"exact_age\" (string)\n\"build_cat\" (choose: slim, regular, heavy, muscular)\n\"exact_build\" (string)\n\"skin\" (string)\n\"hair\" (string)\n\"eyes\" (string)\n\"beard\" (string or 'no beard')\n\"glasses\" (choose: 'no glasses', 'prescription glasses', 'sunglasses')\n\"outfit\" (string)\n\nExample Output:\n{\"gender\": \"male\", \"age_group\": \"elder\", \"exact_age\": \"78 years old\", \"build_cat\": \"slim\", \"exact_build\": \"frail and thin\", \"skin\": \"pale skin\", \"hair\": \"short white hair\", \"eyes\": \"blue eyes\", \"beard\": \"no beard\", \"glasses\": \"prescription glasses\", \"outfit\": \"cozy beige knit sweater with loose linen pants\"}"
                 }),
                 "model": (["Qwen2.5-VL-3B-Instruct", "Qwen2.5-VL-7B-Instruct"],),
                 "quantization": (["none", "4bit", "8bit"], {"default": "4bit"}),
                 "keep_model_loaded": ("BOOLEAN", {"default": False}),
-                "temperature": ("FLOAT", {"default": 0.7, "min": 0.0, "max": 2.0, "step": 0.1}),
+                "temperature": ("FLOAT", {"default": 0.2, "min": 0.0, "max": 2.0, "step": 0.1}),
                 "max_new_tokens": ("INT", {"default": 512, "min": 1, "max": 8192, "step": 1}),
                 "seed": ("INT", {"default": 1675, "min": 0, "max": 0xffffffffffffffff}),
             }
@@ -125,10 +125,11 @@ class DW_QwenBatchExtractor:
                 clean_up_tokenization_spaces=False
             )[0].strip()
             
-            print(f"[DW_INFO] Image {i+1}/{batch_size} Extracted: {output_text}")
+            print(f"[DW_INFO] Image {i+1}/{batch_size} Extracted JSON: {output_text}")
             results.append(output_text)
 
-        aggregated_string = " | ".join(results)
+        # Using a safer delimiter for JSON payloads
+        aggregated_string = " ||| ".join(results)
 
         # Lifecycle Management: VRAM Flush
         if not keep_model_loaded:
