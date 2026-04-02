@@ -358,6 +358,7 @@ def parse_qwen_phenotypes(qwen_string: str) -> dict:
         clean_str = re.sub(r'\s*```$', '', clean_str).strip()
         parsed = json.loads(clean_str)
         
+        # Resilient mapping with fallbacks for hallucinated keys
         data["gender"] = parsed.get("gender", data["gender"]).lower()
         
         age_group = parsed.get("age_group", "").lower()
@@ -365,14 +366,23 @@ def parse_qwen_phenotypes(qwen_string: str) -> dict:
         
         data["exact_age"] = parsed.get("exact_age", data["exact_age"]).lower()
         
-        build_cat = parsed.get("build_cat", "").lower()
+        # Fallback for "physical_build" hallucination
+        build_cat = parsed.get("build_cat", parsed.get("physical_build", "")).lower()
         data["build_cat"] = build_cat if build_cat in ["slim", "regular", "heavy", "muscular"] else data["build_cat"]
         
         data["exact_build"] = parsed.get("exact_build", data["exact_build"]).lower()
-        data["skin"] = parsed.get("skin", data["skin"]).lower()
-        data["hair"] = parsed.get("hair", data["hair"]).lower()
+        
+        # Fallback for "skin_tone" hallucination
+        data["skin"] = parsed.get("skin", parsed.get("skin_tone", data["skin"])).lower()
+        
+        # Fallback for "hair_style_and_color" hallucination
+        data["hair"] = parsed.get("hair", parsed.get("hair_style_and_color", data["hair"])).lower()
+        
         data["eyes"] = parsed.get("eyes", data["eyes"]).lower()
-        data["beard"] = parsed.get("beard", data["beard"]).lower()
+        
+        # Fallback for "beard_style_and_color" hallucination
+        data["beard"] = parsed.get("beard", parsed.get("beard_style_and_color", data["beard"])).lower()
+        
         data["glasses"] = parsed.get("glasses", data["glasses"]).lower()
         data["outfit"] = parsed.get("outfit", data["outfit"]).lower()
 
@@ -410,7 +420,7 @@ class DW_DynamicPoseComposer:
 
     def generate_rigs(self, width: int, height: int, floor_y_percent: float, global_scale: float, vision_context: str, clip, global_positive: str, global_negative: str):
         
-        vision_strings = [s.strip() for s in vision_context.split('|') if s.strip()]
+        vision_strings = [s.strip() for s in vision_context.split('|||') if s.strip()]
         num_characters = len(vision_strings)
         
         if num_characters == 0:
