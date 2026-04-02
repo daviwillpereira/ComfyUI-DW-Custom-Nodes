@@ -26,7 +26,7 @@ class DW_QwenBatchExtractor:
                 "images": ("IMAGE",),
                 "question": ("STRING", {
                     "multiline": True, 
-                    "default": "Analyze the person and output STRICTLY a valid JSON object. Do not include markdown formatting, code blocks, or any conversational text.\n\nRequired JSON keys:\n\"gender\" (string)\n\"age_group\" (choose: baby, child, teenager, adult, elder)\n\"exact_age\" (string)\n\"build_cat\" (choose: slim, regular, heavy, muscular)\n\"exact_build\" (string)\n\"skin\" (string)\n\"hair\" (string)\n\"eyes\" (string)\n\"beard\" (string or 'no beard')\n\"glasses\" (choose: 'no glasses', 'prescription glasses', 'sunglasses')\n\"outfit\" (string)\n\nExample Output:\n{\"gender\": \"male\", \"age_group\": \"elder\", \"exact_age\": \"78 years old\", \"build_cat\": \"slim\", \"exact_build\": \"frail and thin\", \"skin\": \"pale skin\", \"hair\": \"short white hair\", \"eyes\": \"blue eyes\", \"beard\": \"no beard\", \"glasses\": \"prescription glasses\", \"outfit\": \"cozy beige knit sweater with loose linen pants\"}"
+                    "default": "Analyze the person and output STRICTLY a valid JSON object. Do not include markdown formatting, code blocks, or any conversational text.\n\nRequired JSON keys:\n\"gender\" (string)\n\"age_group\" (choose: baby, child, teenager, adult, elder)\n\"exact_age\" (string)\n\"physical_build\" (choose: slim, regular, heavy, muscular)\n\"exact_build\" (string)\n\"skin_tone\" (string)\n\"hair_style_and_color\" (string)\n\"eyes\" (string)\n\"beard_style_and_color\" (string or 'no beard')\n\"glasses\" (choose: 'no', 'prescription', 'sunglasses')\n\"outfit\" (string)"
                 }),
                 "model": (["Qwen2.5-VL-3B-Instruct", "Qwen2.5-VL-7B-Instruct"],),
                 "quantization": (["none", "4bit", "8bit"], {"default": "4bit"}),
@@ -46,7 +46,7 @@ class DW_QwenBatchExtractor:
         repo_id = f"Qwen/{model_name}"
         
         if self.model is not None and self.current_model_name == repo_id and self.current_quant == quant:
-            return # Model already loaded with correct params
+            return 
 
         print(f"[DW_INFO] Loading {repo_id} with {quant} quantization...")
         
@@ -111,6 +111,7 @@ class DW_QwenBatchExtractor:
             
             prompt = self.processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
             inputs = self.processor(text=[prompt], images=[pil_image], padding=True, return_tensors="pt")
+            
             device = next(self.model.parameters()).device
             inputs = {k: v.to(device) for k, v in inputs.items()}
 
@@ -123,7 +124,7 @@ class DW_QwenBatchExtractor:
                 )
                 
             generated_ids_trimmed = [
-                out_ids[len(in_ids):] for in_ids, out_ids in zip(inputs.input_ids, generated_ids)
+                out_ids[len(in_ids):] for in_ids, out_ids in zip(inputs["input_ids"], generated_ids)
             ]
             
             output_text = self.processor.batch_decode(
@@ -133,8 +134,8 @@ class DW_QwenBatchExtractor:
             )[0].strip()
             
             clean_str = output_text.strip()
-
             clean_str = re.sub(r"```json|```", "", clean_str, flags=re.IGNORECASE)
+            
             match = re.search(r"\{.*\}", clean_str, re.DOTALL)
             if match:
                 clean_str = match.group(0).strip()
@@ -147,12 +148,11 @@ class DW_QwenBatchExtractor:
                 print(f"[DW_WARN] Image {i+1}/{batch_size} returned invalid JSON. Using raw fallback.")
                 results.append({"raw_fallback": clean_str})
 
-        # Serialize the entire batch as a single JSON array
+        # Serialize final array
         aggregated_json_string = json.dumps(results)
 
-        # Lifecycle Management: VRAM Flush
         if not keep_model_loaded:
-            print("[DW_INFO] keep_model_loaded is False. Offloading model to free VRAM...")
+            print("[DW_INFO] keep_model_loaded is False. Offloading model...")
             del self.model
             del self.processor
             self.model = None
