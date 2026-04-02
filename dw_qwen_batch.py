@@ -10,7 +10,7 @@ from transformers import Qwen2_5_VLForConditionalGeneration, AutoProcessor, Bits
 class DW_QwenBatchExtractor:
     """
     Enterprise-grade LVLM batch processor with self-contained model lifecycle.
-    Manages its own VRAM footprint, quantization, and batch tensor iteration.
+    Uses a unified regex-based JSON extraction engine for robust VQA payloads.
     """
     
     def __init__(self):
@@ -26,13 +26,13 @@ class DW_QwenBatchExtractor:
                 "images": ("IMAGE",),
                 "question": ("STRING", {
                     "multiline": True, 
-                    "default": "Analyze the person and output STRICTLY a valid JSON object. Do not include markdown formatting, code blocks, or any conversational text.\n\nRequired JSON keys:\n\"gender\" (string)\n\"age_group\" (choose: baby, child, teenager, adult, elder)\n\"exact_age\" (string)\n\"physical_build\" (choose: slim, regular, heavy, muscular)\n\"exact_build\" (string)\n\"skin_tone\" (string)\n\"hair_style_and_color\" (string)\n\"eyes\" (string)\n\"beard_style_and_color\" (string or 'no beard')\n\"glasses\" (choose: 'no', 'prescription', 'sunglasses')\n\"outfit\" (string)"
+                    "default": "Analyze the image and return a JSON object."
                 }),
                 "model": (["Qwen2.5-VL-3B-Instruct", "Qwen2.5-VL-7B-Instruct"],),
                 "quantization": (["none", "4bit", "8bit"], {"default": "4bit"}),
                 "keep_model_loaded": ("BOOLEAN", {"default": False}),
-                "temperature": ("FLOAT", {"default": 0.2, "min": 0.0, "max": 2.0, "step": 0.1}),
-                "max_new_tokens": ("INT", {"default": 512, "min": 1, "max": 8192, "step": 1}),
+                "temperature": ("FLOAT", {"default": 0.1, "min": 0.0, "max": 2.0, "step": 0.1}),
+                "max_new_tokens": ("INT", {"default": 1024, "min": 1, "max": 8192, "step": 1}),
                 "seed": ("INT", {"default": 1675, "min": 0, "max": 0xffffffffffffffff}),
             }
         }
@@ -48,13 +48,9 @@ class DW_QwenBatchExtractor:
         if self.model is not None and self.current_model_name == repo_id and self.current_quant == quant:
             return 
 
-        print(f"[DW_INFO] Loading {repo_id} with {quant} quantization...")
-        
         if self.model is not None:
             del self.model
             del self.processor
-            self.model = None
-            self.processor = None
             gc.collect()
             mm.soft_empty_cache()
 
@@ -78,25 +74,19 @@ class DW_QwenBatchExtractor:
         
         self.current_model_name = repo_id
         self.current_quant = quant
-        print("[DW_INFO] Qwen-VL Model loaded successfully.")
 
     def process_batch(self, images: torch.Tensor, question: str, model: str, quantization: str, keep_model_loaded: bool, temperature: float, max_new_tokens: int, seed: int) -> tuple[str]:
-        
         torch.manual_seed(seed)
         if torch.cuda.is_available():
             torch.cuda.manual_seed_all(seed)
+        
         self.load_model(model, quantization)
-
         batch_size = images.shape[0]
         results = []
 
-        print(f"[DW_INFO] Starting Qwen-VL Batch Inference for {batch_size} images...")
-
         for i in range(batch_size):
             img_tensor = images[i]
-            img_np = img_tensor.cpu().numpy()
-            img_np = np.clip(img_np, 0, 1)
-            img_np = (img_np * 255).astype(np.uint8)
+            img_np = (np.clip(img_tensor.cpu().numpy(), 0, 1) * 255).astype(np.uint8)
             pil_image = Image.fromarray(img_np).convert("RGB")
 
             messages = [
@@ -133,27 +123,21 @@ class DW_QwenBatchExtractor:
                 clean_up_tokenization_spaces=False
             )[0].strip()
             
-            clean_str = output_text.strip()
-            clean_str = re.sub(r'```', '', clean_str)
-            
-            start = clean_str.find('{')
-            end = clean_str.rfind('}')
-            
-            if start != -1 and end != -1 and end > start:
-                clean_str = clean_str[start:end+1]
+            # Unified Resilient JSON Windowing
+            clean_str = output_text
+            match = re.search(r"(\{.*\})", clean_str, re.DOTALL)
+            if match:
+                clean_str = match.group(1).strip()
             
             try:
-                parsed_obj = json.loads(clean_str)
-                results.append(parsed_obj)
-                print(f"[DW_INFO] Image {i+1}/{batch_size} Extracted Successfully.")
+                results.append(json.loads(clean_str))
             except json.JSONDecodeError:
-                print(f"[DW_WARN] Image {i+1}/{batch_size} returned corrupt output. Using fallback.")
-                results.append({"raw_fallback": clean_str if clean_str else output_text})
+                results.append({"error": "parser_failure", "raw_content": output_text})
 
         aggregated_json_string = json.dumps(results)
 
+        # Gestão de VRAM
         if not keep_model_loaded:
-            print("[DW_INFO] Offloading model...")
             del self.model
             del self.processor
             self.model = None
