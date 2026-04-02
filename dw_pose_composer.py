@@ -603,9 +603,10 @@ class DW_DynamicPoseComposer:
             else:
                 traits, exact_age, exact_build, outfit = "detailed face", "adult", "regular build", "stylish casual clothes"
             
-            # Prompt Regional SOTA: Idade exata, corpo cru, todas as traits e outfit do Qwen
-            regional_text = f"A photorealistic {exact_age} {exact_build} {noun}, {traits}, wearing {outfit}, {action_context}, cinematic lighting"
+            # Remove "wearing" if Qwen included it to prevent duplication
+            clean_outfit = outfit.replace("wearing ", "").strip()
             
+            regional_text = f"A photorealistic {exact_age} {exact_build} {noun}, {traits}, wearing {clean_outfit}, {action_context}, cinematic lighting"
             telemetry_lines.append(f"- **{char.char_id}**: `{regional_text}`")
             
             reg_cond, = clip_encoder.encode(clip, regional_text)
