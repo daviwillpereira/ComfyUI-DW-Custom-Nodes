@@ -431,12 +431,12 @@ class DW_DynamicPoseComposer:
                 "gender": raw.get("gender", "male").lower(),
                 "age_group": raw.get("age_group", "adult").lower(),
                 "exact_age": raw.get("exact_age", "30 years old").lower(),
-                "build_cat": raw.get("build_cat", raw.get("physical_build", "regular")).lower(),
+                "build_cat": raw.get("physical_build", raw.get("build_cat", "regular")).lower(),
                 "exact_build": raw.get("exact_build", "average build").lower(),
-                "skin": raw.get("skin", raw.get("skin_tone", "natural skin")).lower(),
-                "hair": raw.get("hair", raw.get("hair_style_and_color", "simple hair")).lower(),
+                "skin": raw.get("skin_tone", raw.get("skin", "natural skin")).lower(),
+                "hair": raw.get("hair_style_and_color", raw.get("hair", "simple hair")).lower(),
                 "eyes": raw.get("eyes", "brown eyes").lower(),
-                "beard": raw.get("beard", raw.get("beard_style_and_color", "no beard")).lower(),
+                "beard": raw.get("beard_style_and_color", raw.get("beard", "no beard")).lower(),
                 "glasses": raw.get("glasses", "no glasses").lower(),
                 "outfit": raw.get("outfit", "modern stylish casual clothes").lower()
             }
@@ -627,7 +627,7 @@ class DW_DynamicPoseComposer:
                 outfit = v_data["outfit"]
             else:
                 traits, exact_age, exact_build, outfit = "detailed face", "adult", "regular build", "stylish casual clothes"
-                
+
             # Remove "wearing" if Qwen included it to prevent duplication
             clean_outfit = outfit.replace("wearing ", "").strip()
             
