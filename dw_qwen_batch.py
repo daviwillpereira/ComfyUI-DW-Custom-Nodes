@@ -134,25 +134,26 @@ class DW_QwenBatchExtractor:
             )[0].strip()
             
             clean_str = output_text.strip()
-            clean_str = re.sub(r"```json|```", "", clean_str, flags=re.IGNORECASE)
+            clean_str = re.sub(r'```', '', clean_str)
             
-            match = re.search(r"\{.*\}", clean_str, re.DOTALL)
-            if match:
-                clean_str = match.group(0).strip()
+            start = clean_str.find('{')
+            end = clean_str.rfind('}')
+            
+            if start != -1 and end != -1 and end > start:
+                clean_str = clean_str[start:end+1]
             
             try:
                 parsed_obj = json.loads(clean_str)
                 results.append(parsed_obj)
-                print(f"[DW_INFO] Image {i+1}/{batch_size} extracted valid JSON.")
+                print(f"[DW_INFO] Image {i+1}/{batch_size} Extracted Successfully.")
             except json.JSONDecodeError:
-                print(f"[DW_WARN] Image {i+1}/{batch_size} returned invalid JSON. Using raw fallback.")
-                results.append({"raw_fallback": clean_str})
+                print(f"[DW_WARN] Image {i+1}/{batch_size} returned corrupt output. Using fallback.")
+                results.append({"raw_fallback": clean_str if clean_str else output_text})
 
-        # Serialize final array
         aggregated_json_string = json.dumps(results)
 
         if not keep_model_loaded:
-            print("[DW_INFO] keep_model_loaded is False. Offloading model...")
+            print("[DW_INFO] Offloading model...")
             del self.model
             del self.processor
             self.model = None
