@@ -2,6 +2,8 @@ import torch
 import numpy as np
 from PIL import Image
 import gc
+import json
+import re
 import comfy.model_management as mm
 from transformers import Qwen2_5_VLForConditionalGeneration, AutoProcessor, BitsAndBytesConfig
 
@@ -80,10 +82,9 @@ class DW_QwenBatchExtractor:
 
     def process_batch(self, images: torch.Tensor, question: str, model: str, quantization: str, keep_model_loaded: bool, temperature: float, max_new_tokens: int, seed: int) -> tuple[str]:
         
-        import json
-        import re
-        
         torch.manual_seed(seed)
+        if torch.cuda.is_available():
+            torch.cuda.manual_seed_all(seed)
         self.load_model(model, quantization)
 
         batch_size = images.shape[0]
@@ -93,7 +94,9 @@ class DW_QwenBatchExtractor:
 
         for i in range(batch_size):
             img_tensor = images[i]
-            img_np = (img_tensor.cpu().numpy() * 255).astype(np.uint8)
+            img_np = img_tensor.cpu().numpy()
+            img_np = np.clip(img_np, 0, 1)
+            img_np = (img_np * 255).astype(np.uint8)
             pil_image = Image.fromarray(img_np).convert("RGB")
 
             messages = [
@@ -108,7 +111,8 @@ class DW_QwenBatchExtractor:
             
             prompt = self.processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
             inputs = self.processor(text=[prompt], images=[pil_image], padding=True, return_tensors="pt")
-            inputs = inputs.to(self.model.device)
+            device = next(self.model.parameters()).device
+            inputs = {k: v.to(device) for k, v in inputs.items()}
 
             with torch.no_grad():
                 generated_ids = self.model.generate(
@@ -128,7 +132,12 @@ class DW_QwenBatchExtractor:
                 clean_up_tokenization_spaces=False
             )[0].strip()
             
-            clean_str = re.sub(r'\s*```$', '', clean_str).strip()
+            clean_str = output_text.strip()
+
+            clean_str = re.sub(r"```json|```", "", clean_str, flags=re.IGNORECASE)
+            match = re.search(r"\{.*\}", clean_str, re.DOTALL)
+            if match:
+                clean_str = match.group(0).strip()
             
             try:
                 parsed_obj = json.loads(clean_str)
@@ -136,7 +145,7 @@ class DW_QwenBatchExtractor:
                 print(f"[DW_INFO] Image {i+1}/{batch_size} extracted valid JSON.")
             except json.JSONDecodeError:
                 print(f"[DW_WARN] Image {i+1}/{batch_size} returned invalid JSON. Using raw fallback.")
-                results.append({"raw_fallback": output_text})
+                results.append({"raw_fallback": clean_str})
 
         # Serialize the entire batch as a single JSON array
         aggregated_json_string = json.dumps(results)
