@@ -123,11 +123,25 @@ class DW_QwenBatchExtractor:
                 clean_up_tokenization_spaces=False
             )[0].strip()
             
-            # Unified Resilient JSON Windowing
+            # --- JSON Healer: Robust Extraction ---
             clean_str = output_text
-            match = re.search(r"(\{.*\})", clean_str, re.DOTALL)
-            if match:
-                clean_str = match.group(1).strip()
+            
+            # 1. Clean markdown blocks manually
+            clean_str = re.sub(r'\s*```$', '', clean_str).strip()
+                
+            # 2. Windowing: Extract from first { to last }
+            start_idx = clean_str.find('{')
+            end_idx = clean_str.rfind('}')
+            
+            if start_idx != -1:
+                if end_idx != -1 and end_idx > start_idx:
+                    clean_str = clean_str[start_idx:end_idx+1]
+                else:
+                    # Fallback: Model opened { but forgot to close it. Force close.
+                    clean_str = clean_str[start_idx:] + '}'
+            
+            # 3. Syntax Healer: Remove trailing commas before closing braces (common LLM typo)
+            clean_str = re.sub(r',\s*([\]}])', r'\1', clean_str)
             
             try:
                 results.append(json.loads(clean_str))
@@ -136,7 +150,6 @@ class DW_QwenBatchExtractor:
 
         aggregated_json_string = json.dumps(results)
 
-        # Gestão de VRAM
         if not keep_model_loaded:
             del self.model
             del self.processor
