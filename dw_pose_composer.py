@@ -587,7 +587,8 @@ class DW_DynamicPoseComposer:
         cond_set_mask = nodes.ConditioningSetMask()
         cond_combine = nodes.ConditioningCombine()
 
-        global_pos_cond_raw, = clip_encoder.encode(clip, global_positive)
+        # FIX: Feed the parsed string, not the raw JSON array
+        global_pos_cond_raw, = clip_encoder.encode(clip, parsed_global_positive)
         global_neg_cond, = clip_encoder.encode(clip, global_negative)
         
         bg_mask_tensor_unsqueeze = bg_mask_tensor.unsqueeze(0)
@@ -598,7 +599,7 @@ class DW_DynamicPoseComposer:
             f"**Seed:** `{rng_seed}`",
             "---",
             f"### 🌍 GLOBAL PROMPTS",
-            f"**Positive:** `{global_positive}`",
+            f"**Positive:** `{parsed_global_positive}`",
             f"**Negative:** `{global_negative}`",
             "---",
             "### 👤 REGIONAL PROMPTS (Multiplexed)"
@@ -648,7 +649,7 @@ class DW_DynamicPoseComposer:
         telemetry_report_str = "\n".join(telemetry_lines)
 
         return (pose_canvas_tensor, masks_tensor, telemetry_report_str, final_pos_cond, global_neg_cond, phenotypes_output)
-    
+        
 # Registration
 NODE_CLASS_MAPPINGS = {
     "DW_DynamicPoseComposer": DW_DynamicPoseComposer
