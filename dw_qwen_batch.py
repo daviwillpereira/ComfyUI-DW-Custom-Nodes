@@ -80,6 +80,9 @@ class DW_QwenBatchExtractor:
 
     def process_batch(self, images: torch.Tensor, question: str, model: str, quantization: str, keep_model_loaded: bool, temperature: float, max_new_tokens: int, seed: int) -> tuple[str]:
         
+        import json
+        import re
+        
         torch.manual_seed(seed)
         self.load_model(model, quantization)
 
@@ -125,11 +128,18 @@ class DW_QwenBatchExtractor:
                 clean_up_tokenization_spaces=False
             )[0].strip()
             
-            print(f"[DW_INFO] Image {i+1}/{batch_size} Extracted JSON: {output_text}")
-            results.append(output_text)
+            clean_str = re.sub(r'\s*```$', '', clean_str).strip()
+            
+            try:
+                parsed_obj = json.loads(clean_str)
+                results.append(parsed_obj)
+                print(f"[DW_INFO] Image {i+1}/{batch_size} extracted valid JSON.")
+            except json.JSONDecodeError:
+                print(f"[DW_WARN] Image {i+1}/{batch_size} returned invalid JSON. Using raw fallback.")
+                results.append({"raw_fallback": output_text})
 
-        # Using a safer delimiter for JSON payloads
-        aggregated_string = " ||| ".join(results)
+        # Serialize the entire batch as a single JSON array
+        aggregated_json_string = json.dumps(results)
 
         # Lifecycle Management: VRAM Flush
         if not keep_model_loaded:
@@ -144,7 +154,7 @@ class DW_QwenBatchExtractor:
             mm.soft_empty_cache()
             torch.cuda.empty_cache()
 
-        return (aggregated_string,)
+        return (aggregated_json_string,)
 
 NODE_CLASS_MAPPINGS = {"DW_QwenBatchExtractor": DW_QwenBatchExtractor}
 NODE_DISPLAY_NAME_MAPPINGS = {"DW_QwenBatchExtractor": "DW Qwen Batch Extractor"}

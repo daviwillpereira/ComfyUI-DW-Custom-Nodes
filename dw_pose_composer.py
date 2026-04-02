@@ -342,58 +342,6 @@ class OpenPoseRenderer:
         return canvas, masks_tensor, bg_mask_tensor
 
 # ==========================================
-# 3.5. Qwen-VL NLP Parser
-# ==========================================
-import json
-import re
-
-def parse_qwen_phenotypes(qwen_string: str) -> dict:
-    data = {
-        "gender": "male", "age_group": "adult", "exact_age": "30 years old",
-        "build_cat": "regular", "exact_build": "average build",
-        "skin": "natural skin", "hair": "simple hair", "eyes": "brown eyes",
-        "beard": "no beard", "glasses": "no glasses", "outfit": "modern stylish casual clothes"
-    }
-    try:
-        clean_str = re.sub(r'\s*```$', '', clean_str).strip()
-        parsed = json.loads(clean_str)
-        
-        # Resilient mapping with fallbacks for hallucinated keys
-        data["gender"] = parsed.get("gender", data["gender"]).lower()
-        
-        age_group = parsed.get("age_group", "").lower()
-        data["age_group"] = age_group if age_group in ["baby", "child", "teenager", "adult", "elder"] else data["age_group"]
-        
-        data["exact_age"] = parsed.get("exact_age", data["exact_age"]).lower()
-        
-        # Fallback for "physical_build" hallucination
-        build_cat = parsed.get("build_cat", parsed.get("physical_build", "")).lower()
-        data["build_cat"] = build_cat if build_cat in ["slim", "regular", "heavy", "muscular"] else data["build_cat"]
-        
-        data["exact_build"] = parsed.get("exact_build", data["exact_build"]).lower()
-        
-        # Fallback for "skin_tone" hallucination
-        data["skin"] = parsed.get("skin", parsed.get("skin_tone", data["skin"])).lower()
-        
-        # Fallback for "hair_style_and_color" hallucination
-        data["hair"] = parsed.get("hair", parsed.get("hair_style_and_color", data["hair"])).lower()
-        
-        data["eyes"] = parsed.get("eyes", data["eyes"]).lower()
-        
-        # Fallback for "beard_style_and_color" hallucination
-        data["beard"] = parsed.get("beard", parsed.get("beard_style_and_color", data["beard"])).lower()
-        
-        data["glasses"] = parsed.get("glasses", data["glasses"]).lower()
-        data["outfit"] = parsed.get("outfit", data["outfit"]).lower()
-
-    except json.JSONDecodeError as e:
-        print(f"[DW_WARN] JSON Parser failed: {e}. Faulty String: {qwen_string}")
-    except Exception as e:
-        print(f"[DW_WARN] Unexpected Error parsing Phenotypes: {e}")
-        
-    return data
-
-# ==========================================
 # 4. Main ComfyUI Node
 # ==========================================
 class DW_DynamicPoseComposer:
@@ -420,11 +368,45 @@ class DW_DynamicPoseComposer:
 
     def generate_rigs(self, width: int, height: int, floor_y_percent: float, global_scale: float, vision_context: str, clip, global_positive: str, global_negative: str):
         
-        vision_strings = [s.strip() for s in vision_context.split('|||') if s.strip()]
-        num_characters = len(vision_strings)
+        import json
         
+        # =======================================================
+        # 1. Parse Character Vision Context (Strict JSON Array)
+        # =======================================================
+        try:
+            vision_data_list = json.loads(vision_context)
+            if not isinstance(vision_data_list, list):
+                vision_data_list = [vision_data_list]
+        except Exception as e:
+            raise ValueError(f"[DW_ERROR] vision_context is not a valid JSON array. Error: {e}")
+            
+        num_characters = len(vision_data_list)
         if num_characters == 0:
-            raise ValueError("[DW] Critical Error: vision_context is empty. Connect the DW Qwen Batch Extractor.")
+            raise ValueError("[DW] Critical Error: vision_context is empty.")
+
+        # =======================================================
+        # 2. Dynamic Background JSON Interception
+        # =======================================================
+        # If Background Qwen output is connected here, it parses the JSON.
+        # If a manual text prompt is connected, it passes straight through.
+        try:
+            bg_data = json.loads(global_positive)
+            if isinstance(bg_data, list) and len(bg_data) > 0 and isinstance(bg_data[0], dict):
+                bg_dict = bg_data[0]
+                parts = []
+                if bg_dict.get("location_name"): parts.append(bg_dict["location_name"])
+                if bg_dict.get("architecture_style"): parts.append(bg_dict["architecture_style"])
+                if bg_dict.get("ground_material"): parts.append(bg_dict["ground_material"])
+                if bg_dict.get("lighting_conditions"): parts.append(bg_dict["lighting_conditions"])
+                if bg_dict.get("atmosphere"): parts.append(bg_dict["atmosphere"])
+                if bg_dict.get("camera_properties"): parts.append(bg_dict["camera_properties"])
+                
+                parsed_global_positive = ", ".join([str(p).strip() for p in parts if str(p).strip()])
+                print(f"[DW_INFO] Background JSON dynamically parsed: {parsed_global_positive}")
+            else:
+                parsed_global_positive = global_positive
+        except Exception:
+            parsed_global_positive = global_positive # Fallback to standard text string
 
         rng_seed = random.randint(0, 9999999)
         rng_context = random.Random(rng_seed)
@@ -438,18 +420,38 @@ class DW_DynamicPoseComposer:
 
         characters = []
         phenotypes_list = []
+        parsed_chars_data = []
         
-        available_adults = []
+        # =======================================================
+        # 3. Clean and map Character properties resiliently
+        # =======================================================
         for i in range(num_characters):
-            v_data = parse_qwen_phenotypes(vision_strings[i])
+            raw = vision_data_list[i]
+            mapped = {
+                "gender": raw.get("gender", "male").lower(),
+                "age_group": raw.get("age_group", "adult").lower(),
+                "exact_age": raw.get("exact_age", "30 years old").lower(),
+                "build_cat": raw.get("build_cat", raw.get("physical_build", "regular")).lower(),
+                "exact_build": raw.get("exact_build", "average build").lower(),
+                "skin": raw.get("skin", raw.get("skin_tone", "natural skin")).lower(),
+                "hair": raw.get("hair", raw.get("hair_style_and_color", "simple hair")).lower(),
+                "eyes": raw.get("eyes", "brown eyes").lower(),
+                "beard": raw.get("beard", raw.get("beard_style_and_color", "no beard")).lower(),
+                "glasses": raw.get("glasses", "no glasses").lower(),
+                "outfit": raw.get("outfit", "modern stylish casual clothes").lower()
+            }
+            if mapped["age_group"] not in ["baby", "child", "teenager", "adult", "elder"]: mapped["age_group"] = "adult"
+            if mapped["build_cat"] not in ["slim", "regular", "heavy", "muscular"]: mapped["build_cat"] = "regular"
+            parsed_chars_data.append(mapped)
+
+        available_adults = []
+        for i, v_data in enumerate(parsed_chars_data):
             if v_data["age_group"] in ["adult", "elder"]:
                 available_adults.append(f"person_{i}")
                 
         used_adults = set()
         
-        for i in range(num_characters):
-            v_data = parse_qwen_phenotypes(vision_strings[i])
-            
+        for i, v_data in enumerate(parsed_chars_data):
             char = CharacterDTO(
                 char_id=f"person_{i}", 
                 gender=v_data["gender"],
