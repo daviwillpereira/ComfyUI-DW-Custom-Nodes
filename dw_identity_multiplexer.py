@@ -45,7 +45,7 @@ class DW_IdentityMultiplexer:
         ClipTextEncode = nodes.NODE_CLASS_MAPPINGS.get("CLIPTextEncode")
 
         if not all([IPAdapterAdvanced, ApplyInstantIDAdvanced, CondSetMask, CondCombine, ClipTextEncode]):
-            raise RuntimeError("SOTA ERROR: Missing required custom nodes. Ensure IPAdapter-Plus and ComfyUI-InstantID are installed.")
+            raise RuntimeError("ERROR: Missing required custom nodes. Ensure IPAdapter-Plus and ComfyUI-InstantID are installed.")
 
         ip_node = IPAdapterAdvanced()
         iid_node = ApplyInstantIDAdvanced()
@@ -71,7 +71,7 @@ class DW_IdentityMultiplexer:
         accumulated_negative = []
 
         telemetry = [
-            "# 🧬 SOTA DUAL-INJECTION MULTIPLEXER REPORT",
+            "# 🧬 DUAL-INJECTION MULTIPLEXER REPORT",
             "---",
             f"**Faces Detected:** `{batch_size}`",
             f"**Semantic Masks Received:** `{mask_batch_size}`",
@@ -168,5 +168,5 @@ NODE_CLASS_MAPPINGS = {
     "DW_IdentityMultiplexer": DW_IdentityMultiplexer
 }
 NODE_DISPLAY_NAME_MAPPINGS = {
-    "DW_IdentityMultiplexer": "DW Identity Multiplexer SOTA"
+    "DW_IdentityMultiplexer": "DW Identity Multiplexer"
 }
