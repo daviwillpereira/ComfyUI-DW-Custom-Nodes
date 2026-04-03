@@ -14,8 +14,7 @@ class DW_IdentityMultiplexer:
                 "insightface": ("FACEANALYSIS",),
                 "control_net": ("CONTROL_NET",),
                 
-                # V6 FIX: Raw Inputs for Internal Processing
-                "raw_reference_faces": ("IMAGE",), 
+                "reference_image_batch": ("IMAGE",), 
                 "p1_base_image": ("IMAGE",),
                 "segm_detector": ("SEGM_DETECTOR",),
                 
@@ -105,14 +104,14 @@ class DW_IdentityMultiplexer:
             img_padded = F.pad(img_resized, (pad_left, pad_right, pad_top, pad_bottom), mode='constant', value=0)
             processed_faces.append(img_padded.squeeze(0).permute(1, 2, 0))
 
-        face_image_batch = torch.stack(processed_faces) # [N, 512, 512, 3]
+        processed_image_batch = torch.stack(processed_faces) # [N, 512, 512, 3]
 
         # 5. Phenotype Initialization
         raw_phenotypes = [str(p) for p in phenotypes_text] if isinstance(phenotypes_text, list) else phenotypes_text.split('\n')
         phenotypes = [re.sub(r'<loc_\d+>', ' ', p).strip() for p in raw_phenotypes if p.strip()]
 
         telemetry.extend([
-            f"**Faces Processed (Padded 512x512):** `{face_image_batch.shape[0]}`",
+            f"**Faces Processed (Padded 512x512):** `{processed_image_batch.shape[0]}`",
             f"**Sorted Masks Extracted:** `{mask_count}`",
             "---",
             "### 🔄 INJECTION LOG"
@@ -130,9 +129,9 @@ class DW_IdentityMultiplexer:
         accumulated_negative = []
 
         # 7. Daisy-Chain Loop
-        batch_size = face_image_batch.shape[0]
+        batch_size = processed_image_batch.shape[0]
         for i in range(batch_size):
-            face_tensor = face_image_batch[i].unsqueeze(0)
+            face_tensor = processed_image_batch[i].unsqueeze(0)
             char_mask = semantic_masks_batch[i if i < mask_count else mask_count - 1].unsqueeze(0)
             phenotype_str = phenotypes[i] if i < len(phenotypes) else ""
             
