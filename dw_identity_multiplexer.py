@@ -39,7 +39,7 @@ class DW_IdentityMultiplexer:
     FUNCTION = "multiplex_pipeline"
     CATEGORY = "DW_Nodes/Identity"
 
-    def multiplex_pipeline(self, model, ipadapter, instantid, insightface, control_net, raw_reference_faces, p1_base_image, segm_detector, clip, base_positive, base_negative, phenotypes_text, segm_drop_size, ipadapter_weight, instantid_ip_weight, instantid_cn_strength, clip_vision=None):
+    def multiplex_pipeline(self, model, ipadapter, instantid, insightface, control_net, reference_image_batch, p1_base_image, segm_detector, clip, base_positive, base_negative, phenotypes_text, segm_drop_size, ipadapter_weight, instantid_ip_weight, instantid_cn_strength, clip_vision=None):
         
         telemetry = ["# 🧬 DUAL-INJECTION MULTIPLEXER REPORT", "---"]
         
@@ -87,7 +87,7 @@ class DW_IdentityMultiplexer:
         # 4. Internal Image Processing (Center Pad to 512x512)
         processed_faces = []
         target_size = 512
-        for img in raw_reference_faces: # [H, W, C]
+        for img in reference_image_batch: # [H, W, C]
             h, w, _ = img.shape
             scale = target_size / max(h, w)
             new_h, new_w = int(h * scale), int(w * scale)
