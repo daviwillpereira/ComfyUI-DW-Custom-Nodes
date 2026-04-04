@@ -9,8 +9,9 @@ from transformers import Qwen2_5_VLForConditionalGeneration, AutoProcessor, Bits
 
 class DW_QwenBatchExtractor:
     """
-    Enterprise-grade LVLM batch processor with self-contained model lifecycle.
-    Uses a unified regex-based JSON extraction engine for robust VQA payloads.
+    Enterprise-grade LVLM batch processor with Dual-Stream Multi-Image support.
+    Injects both full-body and facial crops into the same multimodal prompt to 
+    guarantee accurate macro and micro taxonomy extraction.
     """
     
     def __init__(self):
@@ -26,7 +27,7 @@ class DW_QwenBatchExtractor:
                 "images": ("IMAGE",),
                 "question": ("STRING", {
                     "multiline": True, 
-                    "default": "Analyze the image and return a JSON object."
+                    "default": "Analyze the images and return a JSON object."
                 }),
                 "model": (["Qwen2.5-VL-3B-Instruct", "Qwen2.5-VL-7B-Instruct"],),
                 "quantization": (["none", "4bit", "8bit"], {"default": "4bit"}),
@@ -34,6 +35,9 @@ class DW_QwenBatchExtractor:
                 "temperature": ("FLOAT", {"default": 0.1, "min": 0.0, "max": 2.0, "step": 0.1}),
                 "max_new_tokens": ("INT", {"default": 1024, "min": 1, "max": 8192, "step": 1}),
                 "seed": ("INT", {"default": 1675, "min": 0, "max": 0xffffffffffffffff}),
+            },
+            "optional": {
+                "detail_images_batch": ("IMAGE",),
             }
         }
 
@@ -75,7 +79,7 @@ class DW_QwenBatchExtractor:
         self.current_model_name = repo_id
         self.current_quant = quant
 
-    def process_batch(self, images: torch.Tensor, question: str, model: str, quantization: str, keep_model_loaded: bool, temperature: float, max_new_tokens: int, seed: int) -> tuple[str]:
+    def process_batch(self, images: torch.Tensor, question: str, model: str, quantization: str, keep_model_loaded: bool, temperature: float, max_new_tokens: int, seed: int, detail_images_batch: torch.Tensor = None) -> tuple[str]:
         torch.manual_seed(seed)
         if torch.cuda.is_available():
             torch.cuda.manual_seed_all(seed)
@@ -87,20 +91,30 @@ class DW_QwenBatchExtractor:
         for i in range(batch_size):
             img_tensor = images[i]
             img_np = (np.clip(img_tensor.cpu().numpy(), 0, 1) * 255).astype(np.uint8)
-            pil_image = Image.fromarray(img_np).convert("RGB")
+            pil_base_image = Image.fromarray(img_np).convert("RGB")
+            
+            content_payload = [{"type": "image"}]
+            pil_images = [pil_base_image]
+
+            # Dual-Stream Injection: Add face crop to the context if available
+            if detail_images_batch is not None and i < detail_images_batch.shape[0]:
+                detail_tensor = detail_images_batch[i]
+                detail_np = (np.clip(detail_tensor.cpu().numpy(), 0, 1) * 255).astype(np.uint8)
+                pil_detail_image = Image.fromarray(detail_np).convert("RGB")
+                content_payload.append({"type": "image"})
+                pil_images.append(pil_detail_image)
+
+            content_payload.append({"type": "text", "text": question})
 
             messages = [
                 {
                     "role": "user",
-                    "content": [
-                        {"type": "image"},
-                        {"type": "text", "text": question}
-                    ]
+                    "content": content_payload
                 }
             ]
             
             prompt = self.processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
-            inputs = self.processor(text=[prompt], images=[pil_image], padding=True, return_tensors="pt")
+            inputs = self.processor(text=[prompt], images=pil_images, padding=True, return_tensors="pt")
             
             device = next(self.model.parameters()).device
             inputs = {k: v.to(device) for k, v in inputs.items()}
@@ -123,13 +137,8 @@ class DW_QwenBatchExtractor:
                 clean_up_tokenization_spaces=False
             )[0].strip()
             
-            # --- JSON Healer: Robust Extraction ---
             clean_str = output_text
-            
-            # 1. Clean markdown blocks manually
             clean_str = re.sub(r'\s*```$', '', clean_str).strip()
-                
-            # 2. Windowing: Extract from first { to last }
             start_idx = clean_str.find('{')
             end_idx = clean_str.rfind('}')
             
@@ -137,10 +146,8 @@ class DW_QwenBatchExtractor:
                 if end_idx != -1 and end_idx > start_idx:
                     clean_str = clean_str[start_idx:end_idx+1]
                 else:
-                    # Fallback: Model opened { but forgot to close it. Force close.
                     clean_str = clean_str[start_idx:] + '}'
             
-            # 3. Syntax Healer: Remove trailing commas before closing braces (common LLM typo)
             clean_str = re.sub(r',\s*([\]}])', r'\1', clean_str)
             
             try:
