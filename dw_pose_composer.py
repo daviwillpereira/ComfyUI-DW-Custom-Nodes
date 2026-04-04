@@ -463,7 +463,7 @@ class DW_DynamicPoseComposer:
             beard = f", {v_data['beard']}" if "no" not in v_data['beard'] else ""
             traits = f"{v_data['skin']}, {v_data['hair']}, {v_data['eyes']}{beard}{glasses}"
                 
-            phenotype_line = f"{char.age_group} {char.gender}, {traits}"
+            phenotype_line = f"{v_data['exact_age']} {v_data['exact_build']} {char.gender}, {traits}"
             phenotypes_list.append(phenotype_line)
             
             if char.age_group == "baby":
