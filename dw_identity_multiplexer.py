@@ -4,6 +4,11 @@ import nodes
 import re
 
 class DW_IdentityMultiplexer:
+    """
+    O(N) Identity Injection Engine with Dual-Stream Routing and Native Mask Dilation.
+    Expands the semantic segmentation boundaries morphologically to allow the 
+    generation of high-volume hair topologies (e.g., dreadlocks, afros) without clipping.
+    """
     @classmethod
     def INPUT_TYPES(cls):
         return {
@@ -14,7 +19,6 @@ class DW_IdentityMultiplexer:
                 "insightface": ("FACEANALYSIS",),
                 "control_net": ("CONTROL_NET",),
                 
-                # Dual-Stream Data Routing
                 "body_image_batch": ("IMAGE",), 
                 "face_image_batch": ("IMAGE",), 
                 "p1_base_image": ("IMAGE",),
@@ -26,7 +30,8 @@ class DW_IdentityMultiplexer:
                 "phenotypes_text": ("STRING", {"multiline": True, "forceInput": True}),
                 
                 "segm_drop_size": ("INT", {"default": 150, "min": 1, "max": 1000, "step": 1}),
-                "ipadapter_weight": ("FLOAT", {"default": 0.40, "min": -1.0, "max": 3.0, "step": 0.01}),
+                "mask_dilation": ("INT", {"default": 15, "min": 0, "max": 100, "step": 1}),
+                "ipadapter_weight": ("FLOAT", {"default": 0.80, "min": -1.0, "max": 3.0, "step": 0.01}),
                 "instantid_ip_weight": ("FLOAT", {"default": 0.85, "min": 0.0, "max": 3.0, "step": 0.01}),
                 "instantid_cn_strength": ("FLOAT", {"default": 0.85, "min": 0.0, "max": 3.0, "step": 0.01}),
             },
@@ -41,6 +46,7 @@ class DW_IdentityMultiplexer:
     CATEGORY = "DW_Nodes/Identity"
 
     def _pad_to_512(self, image_tensor):
+        """Pads and resizes incoming tensors to a strict 512x512 matrix."""
         h, w, _ = image_tensor.shape
         scale = 512 / max(h, w)
         new_h, new_w = int(h * scale), int(w * scale)
@@ -49,7 +55,19 @@ class DW_IdentityMultiplexer:
         pad_h, pad_w = 512 - new_h, 512 - new_w
         return F.pad(img_resized, (pad_w // 2, pad_w - pad_w // 2, pad_h // 2, pad_h - pad_h // 2), mode='constant', value=0).squeeze(0).permute(1, 2, 0)
 
-    def multiplex_pipeline(self, model, ipadapter, instantid, insightface, control_net, body_image_batch, face_image_batch, p1_base_image, segm_detector, clip, base_positive, base_negative, phenotypes_text, segm_drop_size, ipadapter_weight, instantid_ip_weight, instantid_cn_strength, clip_vision=None):
+    def _dilate_mask(self, mask_tensor, dilation_amount):
+        """
+        Applies morphological dilation to a boolean mask tensor using 2D max pooling.
+        Provides the necessary bounding box expansion for volumetric hair structures.
+        """
+        if dilation_amount <= 0:
+            return mask_tensor
+        kernel_size = dilation_amount * 2 + 1
+        mask_unsq = mask_tensor.unsqueeze(1)
+        dilated = F.max_pool2d(mask_unsq, kernel_size=kernel_size, stride=1, padding=dilation_amount)
+        return dilated.squeeze(1)
+
+    def multiplex_pipeline(self, model, ipadapter, instantid, insightface, control_net, body_image_batch, face_image_batch, p1_base_image, segm_detector, clip, base_positive, base_negative, phenotypes_text, segm_drop_size, mask_dilation, ipadapter_weight, instantid_ip_weight, instantid_cn_strength, clip_vision=None):
         
         telemetry = ["# 🧬 DUAL-STREAM MULTIPLEXER REPORT", "---"]
         
@@ -69,6 +87,9 @@ class DW_IdentityMultiplexer:
 
         mask_count = semantic_masks_batch.shape[0]
         if mask_count == 0: raise ValueError("ERROR: YOLO detected 0 people.")
+
+        # Architectural Fix: Native PyTorch Mask Dilation
+        semantic_masks_batch = self._dilate_mask(semantic_masks_batch, mask_dilation)
 
         mask_centers = [torch.nonzero(torch.any(m > 0, dim=0)).float().mean().item() if torch.any(torch.any(m > 0, dim=0)) else 0 for m in semantic_masks_batch]
         semantic_masks_batch = semantic_masks_batch[sorted(range(len(mask_centers)), key=lambda k: mask_centers[k])]
