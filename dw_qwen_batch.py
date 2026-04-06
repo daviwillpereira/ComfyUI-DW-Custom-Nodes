@@ -9,9 +9,9 @@ from transformers import Qwen2_5_VLForConditionalGeneration, AutoProcessor, Bits
 
 class DW_QwenBatchExtractor:
     """
-    Enterprise-grade LVLM batch processor with Dual-Stream Multi-Image support.
-    Injects both full-body and facial crops into the same multimodal prompt to 
-    guarantee accurate macro and micro taxonomy extraction.
+    Enterprise-grade LVLM batch processor with Split-Inference Fusion.
+    Executes isolated inferences for macro (body) and micro (face) domains 
+    to prevent Attention Dilution, merging the output into a unified JSON.
     """
     
     def __init__(self):
@@ -25,9 +25,13 @@ class DW_QwenBatchExtractor:
         return {
             "required": {
                 "images": ("IMAGE",),
-                "question": ("STRING", {
+                "question_body": ("STRING", {
                     "multiline": True, 
-                    "default": "Analyze the images and return a JSON object."
+                    "default": "Analyze the full body image and return a JSON object."
+                }),
+                "question_face": ("STRING", {
+                    "multiline": True, 
+                    "default": "Analyze the face crop image and return a JSON object."
                 }),
                 "model": (["Qwen2.5-VL-3B-Instruct", "Qwen2.5-VL-7B-Instruct"],),
                 "quantization": (["none", "4bit", "8bit"], {"default": "4bit"}),
@@ -79,7 +83,61 @@ class DW_QwenBatchExtractor:
         self.current_model_name = repo_id
         self.current_quant = quant
 
-    def process_batch(self, images: torch.Tensor, question: str, model: str, quantization: str, keep_model_loaded: bool, temperature: float, max_new_tokens: int, seed: int, detail_images_batch: torch.Tensor = None) -> tuple[str]:
+    def _extract_json_from_image(self, pil_image: Image.Image, question: str, temperature: float, max_new_tokens: int) -> dict:
+        """Helper method to run an isolated VQA inference and parse the JSON result."""
+        messages = [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "image"},
+                    {"type": "text", "text": question}
+                ]
+            }
+        ]
+        prompt = self.processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+        inputs = self.processor(text=[prompt], images=[pil_image], padding=True, return_tensors="pt")
+        
+        device = next(self.model.parameters()).device
+        inputs = {k: v.to(device) for k, v in inputs.items()}
+
+        with torch.no_grad():
+            generated_ids = self.model.generate(
+                **inputs, 
+                max_new_tokens=max_new_tokens,
+                temperature=temperature,
+                do_sample=(temperature > 0.0)
+            )
+            
+        generated_ids_trimmed = [
+            out_ids[len(in_ids):] for in_ids, out_ids in zip(inputs["input_ids"], generated_ids)
+        ]
+        
+        output_text = self.processor.batch_decode(
+            generated_ids_trimmed, 
+            skip_special_tokens=True, 
+            clean_up_tokenization_spaces=False
+        )[0].strip()
+        
+        # Robust JSON cleaning mechanism
+        clean_str = output_text
+        clean_str = re.sub(r'\s*```$', '', clean_str).strip()
+        start_idx = clean_str.find('{')
+        end_idx = clean_str.rfind('}')
+        
+        if start_idx != -1:
+            if end_idx != -1 and end_idx > start_idx:
+                clean_str = clean_str[start_idx:end_idx+1]
+            else:
+                clean_str = clean_str[start_idx:] + '}'
+        
+        clean_str = re.sub(r',\s*([\]}])', r'\1', clean_str)
+        
+        try:
+            return json.loads(clean_str)
+        except json.JSONDecodeError:
+            return {"error": "parser_failure", "raw_content": output_text}
+
+    def process_batch(self, images: torch.Tensor, question_body: str, question_face: str, model: str, quantization: str, keep_model_loaded: bool, temperature: float, max_new_tokens: int, seed: int, detail_images_batch: torch.Tensor = None) -> tuple[str]:
         torch.manual_seed(seed)
         if torch.cuda.is_available():
             torch.cuda.manual_seed_all(seed)
@@ -89,71 +147,26 @@ class DW_QwenBatchExtractor:
         results = []
 
         for i in range(batch_size):
+            # 1. Macro Domain Inference (Full Body)
             img_tensor = images[i]
             img_np = (np.clip(img_tensor.cpu().numpy(), 0, 1) * 255).astype(np.uint8)
             pil_base_image = Image.fromarray(img_np).convert("RGB")
             
-            content_payload = [{"type": "image"}]
-            pil_images = [pil_base_image]
-
-            # Dual-Stream Injection: Add face crop to the context if available
+            body_data = self._extract_json_from_image(pil_base_image, question_body, temperature, max_new_tokens)
+            
+            # 2. Micro Domain Inference (Face Crop)
+            face_data = {}
             if detail_images_batch is not None and i < detail_images_batch.shape[0]:
                 detail_tensor = detail_images_batch[i]
                 detail_np = (np.clip(detail_tensor.cpu().numpy(), 0, 1) * 255).astype(np.uint8)
                 pil_detail_image = Image.fromarray(detail_np).convert("RGB")
-                content_payload.append({"type": "image"})
-                pil_images.append(pil_detail_image)
-
-            content_payload.append({"type": "text", "text": question})
-
-            messages = [
-                {
-                    "role": "user",
-                    "content": content_payload
-                }
-            ]
-            
-            prompt = self.processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
-            inputs = self.processor(text=[prompt], images=pil_images, padding=True, return_tensors="pt")
-            
-            device = next(self.model.parameters()).device
-            inputs = {k: v.to(device) for k, v in inputs.items()}
-
-            with torch.no_grad():
-                generated_ids = self.model.generate(
-                    **inputs, 
-                    max_new_tokens=max_new_tokens,
-                    temperature=temperature,
-                    do_sample=(temperature > 0.0)
-                )
                 
-            generated_ids_trimmed = [
-                out_ids[len(in_ids):] for in_ids, out_ids in zip(inputs["input_ids"], generated_ids)
-            ]
+                face_data = self._extract_json_from_image(pil_detail_image, question_face, temperature, max_new_tokens)
             
-            output_text = self.processor.batch_decode(
-                generated_ids_trimmed, 
-                skip_special_tokens=True, 
-                clean_up_tokenization_spaces=False
-            )[0].strip()
-            
-            clean_str = output_text
-            clean_str = re.sub(r'\s*```$', '', clean_str).strip()
-            start_idx = clean_str.find('{')
-            end_idx = clean_str.rfind('}')
-            
-            if start_idx != -1:
-                if end_idx != -1 and end_idx > start_idx:
-                    clean_str = clean_str[start_idx:end_idx+1]
-                else:
-                    clean_str = clean_str[start_idx:] + '}'
-            
-            clean_str = re.sub(r',\s*([\]}])', r'\1', clean_str)
-            
-            try:
-                results.append(json.loads(clean_str))
-            except json.JSONDecodeError:
-                results.append({"error": "parser_failure", "raw_content": output_text})
+            # 3. Split-Inference Fusion
+            # The face_data keys overwrite body_data keys if there are overlaps, ensuring micro-details are prioritized.
+            merged_data = {**body_data, **face_data}
+            results.append(merged_data)
 
         aggregated_json_string = json.dumps(results)
 
