@@ -12,6 +12,7 @@ class DW_QwenBatchExtractor:
     Enterprise-grade LVLM batch processor with Split-Inference Fusion.
     Executes isolated inferences for macro (body) and micro (face) domains 
     to prevent Attention Dilution, merging the output into a unified JSON.
+    Implemented bfloat16 and repetition penalty to prevent tensor overflow.
     """
     
     def __init__(self):
@@ -36,7 +37,7 @@ class DW_QwenBatchExtractor:
                 "model": (["Qwen2.5-VL-3B-Instruct", "Qwen2.5-VL-7B-Instruct"],),
                 "quantization": (["none", "4bit", "8bit"], {"default": "4bit"}),
                 "keep_model_loaded": ("BOOLEAN", {"default": False}),
-                "temperature": ("FLOAT", {"default": 0.1, "min": 0.0, "max": 2.0, "step": 0.1}),
+                "temperature": ("FLOAT", {"default": 0.0, "min": 0.0, "max": 2.0, "step": 0.1}),
                 "max_new_tokens": ("INT", {"default": 1024, "min": 1, "max": 8192, "step": 1}),
                 "seed": ("INT", {"default": 1675, "min": 0, "max": 0xffffffffffffffff}),
             },
@@ -63,11 +64,15 @@ class DW_QwenBatchExtractor:
             mm.soft_empty_cache()
 
         quantization_config = None
+        
+        # SOTA FIX: Use bfloat16 if supported to prevent NaN overflow in 4-bit quantization
+        compute_dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
+
         if quant == "4bit":
             quantization_config = BitsAndBytesConfig(
                 load_in_4bit=True,
                 bnb_4bit_quant_type="nf4",
-                bnb_4bit_compute_dtype=torch.float16
+                bnb_4bit_compute_dtype=compute_dtype
             )
         elif quant == "8bit":
             quantization_config = BitsAndBytesConfig(load_in_8bit=True)
@@ -77,7 +82,7 @@ class DW_QwenBatchExtractor:
             repo_id,
             quantization_config=quantization_config,
             device_map="auto",
-            torch_dtype=torch.float16
+            torch_dtype=compute_dtype
         )
         
         self.current_model_name = repo_id
@@ -101,11 +106,13 @@ class DW_QwenBatchExtractor:
         inputs = {k: v.to(device) for k, v in inputs.items()}
 
         with torch.no_grad():
+            # SOTA FIX: Added repetition_penalty to prevent infinite loops during NaN panics
             generated_ids = self.model.generate(
                 **inputs, 
                 max_new_tokens=max_new_tokens,
-                temperature=temperature,
-                do_sample=(temperature > 0.0)
+                temperature=temperature if temperature > 0.0 else 1.0,
+                do_sample=(temperature > 0.0),
+                repetition_penalty=1.05
             )
             
         generated_ids_trimmed = [
@@ -119,8 +126,12 @@ class DW_QwenBatchExtractor:
         )[0].strip()
         
         # Robust JSON cleaning mechanism
+        # Using string multiplication to bypass markdown parser breaking issues
         clean_str = output_text
-        clean_str = re.sub(r'\s*```$', '', clean_str).strip()
+        markdown_ticks = '`' * 3
+        regex_pattern = r'\s*' + markdown_ticks + r'(?:json)?$'
+        clean_str = re.sub(regex_pattern, '', clean_str, flags=re.IGNORECASE).strip()
+        
         start_idx = clean_str.find('{')
         end_idx = clean_str.rfind('}')
         
