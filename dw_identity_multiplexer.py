@@ -5,8 +5,8 @@ import nodes
 class DW_IdentityMultiplexer:
     """
     O(N) Identity Injection Engine with Strict Face BBOX Isolation.
-    Generates face-only dilated masks to prevent IP-Adapter semantic bleeding 
-    onto the body (clothing/background colors).
+    Generates face-only dilated masks directly from SEGS to prevent 
+    IP-Adapter semantic bleeding onto the body (clothing/background colors).
     """
     @classmethod
     def INPUT_TYPES(cls):
@@ -56,28 +56,56 @@ class DW_IdentityMultiplexer:
         
         telemetry = ["# 🧬 DUAL-STREAM MULTIPLEXER REPORT", "---"]
         
-        ImpactBbox = nodes.NODE_CLASS_MAPPINGS.get("BboxDetectorForEach")
-        ImpactSegmToMask = nodes.NODE_CLASS_MAPPINGS.get("ImpactSEGSToMaskBatch")
+        ImpactBbox = nodes.NODE_CLASS_MAPPINGS.get("BboxDetectorSEGS")
         IPAdapterAdvanced = nodes.NODE_CLASS_MAPPINGS.get("IPAdapterAdvanced")
         ApplyInstantIDAdvanced = nodes.NODE_CLASS_MAPPINGS.get("ApplyInstantIDAdvanced")
         CondSetMask = nodes.NODE_CLASS_MAPPINGS.get("ConditioningSetMask")
         CondCombine = nodes.NODE_CLASS_MAPPINGS.get("ConditioningCombine")
         ClipTextEncode = nodes.NODE_CLASS_MAPPINGS.get("CLIPTextEncode")
 
-        # SOTA FIX: Extract Face BBOX natively and convert to Mask
+        if not ImpactBbox:
+            raise RuntimeError("ERROR: Impact Pack 'BboxDetectorSEGS' not found in ComfyUI.")
+
+        # SOTA FIX: Extract Face SEGS natively and build masks in Python to avoid NoneType crashes
         try:
-            segs_out = getattr(ImpactBbox(), ImpactBbox.FUNCTION)(bbox_detector, p1_base_image, threshold=0.3, dilation=mask_dilation, crop_factor=3.0, drop_size=10, labels="face")[1]
-            face_masks_batch = getattr(ImpactSegmToMask(), ImpactSegmToMask.FUNCTION)(segs_out)[0]
+            bbox_node = ImpactBbox()
+            segs_out = getattr(bbox_node, bbox_node.FUNCTION)(
+                bbox_detector, p1_base_image, threshold=0.3, dilation=mask_dilation, crop_factor=1.0, drop_size=10, labels="face"
+            )[0]
+            
+            canvas_shape = segs_out[0]
+            seg_list = segs_out[1]
+            
+            if len(seg_list) == 0: 
+                raise ValueError("ERROR: YOLO detected 0 faces.")
+            
+            h, w = canvas_shape[0], canvas_shape[1]
+            face_masks = []
+            mask_centers = []
+            
+            for seg in seg_list:
+                crop_mask = getattr(seg, 'cropped_mask', None)
+                x1, y1, x2, y2 = getattr(seg, 'crop_region', (0, 0, 0, 0))
+                canvas_mask = torch.zeros((h, w), dtype=torch.float32)
+                
+                if crop_mask is not None:
+                    if crop_mask.dim() == 3: crop_mask = crop_mask.squeeze(0)
+                    ch, cw = crop_mask.shape
+                    y2_actual, x2_actual = min(y1+ch, h), min(x1+cw, w)
+                    canvas_mask[y1:y2_actual, x1:x2_actual] = crop_mask[:(y2_actual-y1), :(x2_actual-x1)]
+                else:
+                    canvas_mask[y1:y2, x1:x2] = 1.0 # Fallback solid box
+                    
+                face_masks.append(canvas_mask)
+                mask_centers.append((x1 + x2) / 2.0)
+                
+            # Sort masks left-to-right to maintain index synchronization
+            face_masks_batch = torch.stack([m for _, m in sorted(zip(mask_centers, face_masks), key=lambda k: k[0])])
+
         except Exception as e:
-            raise RuntimeError(f"ERROR: Face BBOX Detection Failed. Details: {e}")
+            raise RuntimeError(f"ERROR: Mask Building Failed. Details: {e}")
 
         mask_count = face_masks_batch.shape[0]
-        if mask_count == 0: raise ValueError("ERROR: YOLO detected 0 faces.")
-
-        # Sort masks left-to-right to maintain index synchronization
-        mask_centers = [torch.nonzero(torch.any(m > 0, dim=0)).float().mean().item() if torch.any(torch.any(m > 0, dim=0)) else 0 for m in face_masks_batch]
-        face_masks_batch = face_masks_batch[sorted(range(len(mask_centers)), key=lambda k: mask_centers[k])]
-
         processed_bodies = torch.stack([self._pad_to_512(img) for img in body_image_batch])
         processed_faces = torch.stack([self._pad_to_512(img) for img in face_image_batch])
 
