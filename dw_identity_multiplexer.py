@@ -1,5 +1,6 @@
 import torch
 import torch.nn.functional as F
+import numpy as np
 import nodes
 
 class DW_IdentityMultiplexer:
@@ -7,6 +8,7 @@ class DW_IdentityMultiplexer:
     O(N) Identity Injection Engine with Strict Face BBOX Isolation.
     Generates face-only dilated masks directly from SEGS to prevent 
     IP-Adapter semantic bleeding onto the body (clothing/background colors).
+    Includes strict Type Casting (NumPy to PyTorch Tensor) for robust memory handling.
     """
     @classmethod
     def INPUT_TYPES(cls):
@@ -66,7 +68,6 @@ class DW_IdentityMultiplexer:
         if not ImpactBbox:
             raise RuntimeError("ERROR: Impact Pack 'BboxDetectorSEGS' not found in ComfyUI.")
 
-        # SOTA FIX: Extract Face SEGS natively and build masks in Python to avoid NoneType crashes
         try:
             bbox_node = ImpactBbox()
             segs_out = getattr(bbox_node, bbox_node.FUNCTION)(
@@ -89,17 +90,24 @@ class DW_IdentityMultiplexer:
                 canvas_mask = torch.zeros((h, w), dtype=torch.float32)
                 
                 if crop_mask is not None:
-                    if crop_mask.dim() == 3: crop_mask = crop_mask.squeeze(0)
+                    # SOTA FIX: Type Casting Numpy array to PyTorch Tensor
+                    if isinstance(crop_mask, np.ndarray):
+                        crop_mask = torch.from_numpy(crop_mask)
+                    
+                    if crop_mask.dim() == 3: 
+                        crop_mask = crop_mask.squeeze(0)
+                        
+                    crop_mask = crop_mask.float()
+                    
                     ch, cw = crop_mask.shape
                     y2_actual, x2_actual = min(y1+ch, h), min(x1+cw, w)
                     canvas_mask[y1:y2_actual, x1:x2_actual] = crop_mask[:(y2_actual-y1), :(x2_actual-x1)]
                 else:
-                    canvas_mask[y1:y2, x1:x2] = 1.0 # Fallback solid box
+                    canvas_mask[y1:y2, x1:x2] = 1.0 
                     
                 face_masks.append(canvas_mask)
                 mask_centers.append((x1 + x2) / 2.0)
                 
-            # Sort masks left-to-right to maintain index synchronization
             face_masks_batch = torch.stack([m for _, m in sorted(zip(mask_centers, face_masks), key=lambda k: k[0])])
 
         except Exception as e:
@@ -123,7 +131,6 @@ class DW_IdentityMultiplexer:
             
             log_entry = f"- **Subject {i}**: "
 
-            # 1. IPAdapter gets the BODY Tensor but injects ONLY into the FACE MASK
             try:
                 final_model = ip_node.apply_ipadapter(final_model, ipadapter, image=body_tensor, weight=ipadapter_weight, weight_type="linear", combine_embeds="concat", start_at=0.0, end_at=1.0, embeds_scaling="V only", attn_mask=char_mask, clip_vision=clip_vision)[0]
                 log_entry += "✅ IPA (Strict Face Mask) | "
@@ -134,7 +141,6 @@ class DW_IdentityMultiplexer:
                 encoded_pos, = encoder_node.encode(clip, phenotypes[i])
                 char_pos, = set_mask_node.append(encoded_pos, char_mask, "default", 1.0)
 
-            # 2. InstantID gets the HEADSHOT
             try:
                 iid_res = iid_node.apply_instantid(instantid, insightface, control_net, image=face_tensor, model=final_model, positive=char_pos, negative=char_neg, ip_weight=instantid_ip_weight, cn_strength=instantid_cn_strength, start_at=0.0, end_at=1.0, noise=0.0, combine_embeds="average", mask=char_mask)
                 final_model, pos_out, neg_out = iid_res[0], iid_res[1], iid_res[2]
