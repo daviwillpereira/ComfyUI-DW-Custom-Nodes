@@ -427,6 +427,16 @@ class DW_DynamicPoseComposer:
         # =======================================================
         for i in range(num_characters):
             raw = vision_data_list[i]
+            
+            # 3-Piece Outfit Composition
+            outfit_upper = raw.get("outfit_upper", "")
+            outfit_lower = raw.get("outfit_lower", "")
+            outfit_footwear = raw.get("outfit_footwear", "")
+            
+            combined_outfit = ", ".join(filter(None, [outfit_upper, outfit_lower, outfit_footwear])).strip()
+            if not combined_outfit:
+                combined_outfit = raw.get("outfit", "modern stylish casual clothes")
+            
             mapped = {
                 "gender": raw.get("gender", "male").lower(),
                 "age_group": raw.get("age_group", "adult").lower(),
@@ -438,8 +448,9 @@ class DW_DynamicPoseComposer:
                 "eyes": raw.get("eyes", "brown eyes").lower(),
                 "beard": raw.get("beard_style_and_color", raw.get("beard", "no beard")).lower(),
                 "glasses": raw.get("glasses", "no glasses").lower(),
-                "outfit": raw.get("outfit", "modern stylish casual clothes").lower()
+                "outfit": combined_outfit.lower()
             }
+            
             if mapped["age_group"] not in ["baby", "child", "teenager", "adult", "elder"]: mapped["age_group"] = "adult"
             if mapped["build_cat"] not in ["slim", "regular", "heavy", "muscular"]: mapped["build_cat"] = "regular"
             parsed_chars_data.append(mapped)

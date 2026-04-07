@@ -1,13 +1,12 @@
 import torch
 import torch.nn.functional as F
 import nodes
-import re
 
 class DW_IdentityMultiplexer:
     """
-    O(N) Identity Injection Engine with Dual-Stream Routing and Native Mask Dilation.
-    Expands the semantic segmentation boundaries morphologically to allow the 
-    generation of high-volume hair topologies (e.g., dreadlocks, afros) without clipping.
+    O(N) Identity Injection Engine with Strict Face BBOX Isolation.
+    Generates face-only dilated masks to prevent IP-Adapter semantic bleeding 
+    onto the body (clothing/background colors).
     """
     @classmethod
     def INPUT_TYPES(cls):
@@ -22,15 +21,14 @@ class DW_IdentityMultiplexer:
                 "body_image_batch": ("IMAGE",), 
                 "face_image_batch": ("IMAGE",), 
                 "p1_base_image": ("IMAGE",),
-                "segm_detector": ("SEGM_DETECTOR",),
+                "bbox_detector": ("BBOX_DETECTOR",), 
                 
                 "clip": ("CLIP",),
                 "base_positive": ("CONDITIONING",),
                 "base_negative": ("CONDITIONING",),
                 "phenotypes_text": ("STRING", {"multiline": True, "forceInput": True}),
                 
-                "segm_drop_size": ("INT", {"default": 150, "min": 1, "max": 1000, "step": 1}),
-                "mask_dilation": ("INT", {"default": 15, "min": 0, "max": 100, "step": 1}),
+                "mask_dilation": ("INT", {"default": 20, "min": 0, "max": 100, "step": 1}),
                 "ipadapter_weight": ("FLOAT", {"default": 0.80, "min": -1.0, "max": 3.0, "step": 0.01}),
                 "instantid_ip_weight": ("FLOAT", {"default": 0.85, "min": 0.0, "max": 3.0, "step": 0.01}),
                 "instantid_cn_strength": ("FLOAT", {"default": 0.85, "min": 0.0, "max": 3.0, "step": 0.01}),
@@ -46,7 +44,6 @@ class DW_IdentityMultiplexer:
     CATEGORY = "DW_Nodes/Identity"
 
     def _pad_to_512(self, image_tensor):
-        """Pads and resizes incoming tensors to a strict 512x512 matrix."""
         h, w, _ = image_tensor.shape
         scale = 512 / max(h, w)
         new_h, new_w = int(h * scale), int(w * scale)
@@ -55,23 +52,11 @@ class DW_IdentityMultiplexer:
         pad_h, pad_w = 512 - new_h, 512 - new_w
         return F.pad(img_resized, (pad_w // 2, pad_w - pad_w // 2, pad_h // 2, pad_h - pad_h // 2), mode='constant', value=0).squeeze(0).permute(1, 2, 0)
 
-    def _dilate_mask(self, mask_tensor, dilation_amount):
-        """
-        Applies morphological dilation to a boolean mask tensor using 2D max pooling.
-        Provides the necessary bounding box expansion for volumetric hair structures.
-        """
-        if dilation_amount <= 0:
-            return mask_tensor
-        kernel_size = dilation_amount * 2 + 1
-        mask_unsq = mask_tensor.unsqueeze(1)
-        dilated = F.max_pool2d(mask_unsq, kernel_size=kernel_size, stride=1, padding=dilation_amount)
-        return dilated.squeeze(1)
-
-    def multiplex_pipeline(self, model, ipadapter, instantid, insightface, control_net, body_image_batch, face_image_batch, p1_base_image, segm_detector, clip, base_positive, base_negative, phenotypes_text, segm_drop_size, mask_dilation, ipadapter_weight, instantid_ip_weight, instantid_cn_strength, clip_vision=None):
+    def multiplex_pipeline(self, model, ipadapter, instantid, insightface, control_net, body_image_batch, face_image_batch, p1_base_image, bbox_detector, clip, base_positive, base_negative, phenotypes_text, mask_dilation, ipadapter_weight, instantid_ip_weight, instantid_cn_strength, clip_vision=None):
         
         telemetry = ["# 🧬 DUAL-STREAM MULTIPLEXER REPORT", "---"]
         
-        ImpactSegm = nodes.NODE_CLASS_MAPPINGS.get("SegmDetectorSEGS")
+        ImpactBbox = nodes.NODE_CLASS_MAPPINGS.get("BboxDetectorForEach")
         ImpactSegmToMask = nodes.NODE_CLASS_MAPPINGS.get("ImpactSEGSToMaskBatch")
         IPAdapterAdvanced = nodes.NODE_CLASS_MAPPINGS.get("IPAdapterAdvanced")
         ApplyInstantIDAdvanced = nodes.NODE_CLASS_MAPPINGS.get("ApplyInstantIDAdvanced")
@@ -79,27 +64,25 @@ class DW_IdentityMultiplexer:
         CondCombine = nodes.NODE_CLASS_MAPPINGS.get("ConditioningCombine")
         ClipTextEncode = nodes.NODE_CLASS_MAPPINGS.get("CLIPTextEncode")
 
+        # SOTA FIX: Extract Face BBOX natively and convert to Mask
         try:
-            segs_out = getattr(ImpactSegm(), ImpactSegm.FUNCTION)(segm_detector, p1_base_image, 0.5, 1, 2.5, segm_drop_size, "person")[0]
-            semantic_masks_batch = getattr(ImpactSegmToMask(), ImpactSegmToMask.FUNCTION)(segs_out)[0]
+            segs_out = getattr(ImpactBbox(), ImpactBbox.FUNCTION)(bbox_detector, p1_base_image, threshold=0.3, dilation=mask_dilation, crop_factor=3.0, drop_size=10, labels="face")[1]
+            face_masks_batch = getattr(ImpactSegmToMask(), ImpactSegmToMask.FUNCTION)(segs_out)[0]
         except Exception as e:
-            raise RuntimeError(f"ERROR: Internal Segmentation Failed. Details: {e}")
+            raise RuntimeError(f"ERROR: Face BBOX Detection Failed. Details: {e}")
 
-        mask_count = semantic_masks_batch.shape[0]
-        if mask_count == 0: raise ValueError("ERROR: YOLO detected 0 people.")
+        mask_count = face_masks_batch.shape[0]
+        if mask_count == 0: raise ValueError("ERROR: YOLO detected 0 faces.")
 
-        # Architectural Fix: Native PyTorch Mask Dilation
-        semantic_masks_batch = self._dilate_mask(semantic_masks_batch, mask_dilation)
+        # Sort masks left-to-right to maintain index synchronization
+        mask_centers = [torch.nonzero(torch.any(m > 0, dim=0)).float().mean().item() if torch.any(torch.any(m > 0, dim=0)) else 0 for m in face_masks_batch]
+        face_masks_batch = face_masks_batch[sorted(range(len(mask_centers)), key=lambda k: mask_centers[k])]
 
-        mask_centers = [torch.nonzero(torch.any(m > 0, dim=0)).float().mean().item() if torch.any(torch.any(m > 0, dim=0)) else 0 for m in semantic_masks_batch]
-        semantic_masks_batch = semantic_masks_batch[sorted(range(len(mask_centers)), key=lambda k: mask_centers[k])]
-
-        # Dual-Stream Processing
         processed_bodies = torch.stack([self._pad_to_512(img) for img in body_image_batch])
         processed_faces = torch.stack([self._pad_to_512(img) for img in face_image_batch])
 
         raw_phenotypes = [str(p) for p in phenotypes_text] if isinstance(phenotypes_text, list) else phenotypes_text.split('\n')
-        phenotypes = [re.sub(r'<loc_\d+>', ' ', p).strip() for p in raw_phenotypes if p.strip()]
+        phenotypes = [p.strip() for p in raw_phenotypes if p.strip()]
 
         ip_node, iid_node, set_mask_node, combine_node, encoder_node = IPAdapterAdvanced(), ApplyInstantIDAdvanced(), CondSetMask(), CondCombine(), ClipTextEncode()
         final_model, accumulated_positive, accumulated_negative = model, [], []
@@ -108,14 +91,14 @@ class DW_IdentityMultiplexer:
         for i in range(batch_size):
             body_tensor = processed_bodies[i].unsqueeze(0)
             face_tensor = processed_faces[i if i < processed_faces.shape[0] else processed_faces.shape[0]-1].unsqueeze(0)
-            char_mask = semantic_masks_batch[i if i < mask_count else mask_count - 1].unsqueeze(0)
+            char_mask = face_masks_batch[i if i < mask_count else mask_count - 1].unsqueeze(0)
             
             log_entry = f"- **Subject {i}**: "
 
-            # 1. IPAdapter gets the BODY
+            # 1. IPAdapter gets the BODY Tensor but injects ONLY into the FACE MASK
             try:
                 final_model = ip_node.apply_ipadapter(final_model, ipadapter, image=body_tensor, weight=ipadapter_weight, weight_type="linear", combine_embeds="concat", start_at=0.0, end_at=1.0, embeds_scaling="V only", attn_mask=char_mask, clip_vision=clip_vision)[0]
-                log_entry += "✅ IPA (Body) | "
+                log_entry += "✅ IPA (Strict Face Mask) | "
             except Exception as e: log_entry += f"❌ IPA ERROR ({e}) | "
 
             char_pos, char_neg = base_positive, base_negative
@@ -138,12 +121,8 @@ class DW_IdentityMultiplexer:
         for pos in accumulated_positive: final_positive, = combine_node.combine(final_positive, pos)
         for neg in accumulated_negative: final_negative, = combine_node.combine(final_negative, neg)
 
-        return (final_model, final_positive, final_negative, semantic_masks_batch, "\n".join(telemetry))
+        return (final_model, final_positive, final_negative, face_masks_batch, "\n".join(telemetry))
 
 # --- REGISTRATION ---
-NODE_CLASS_MAPPINGS = {
-    "DW_IdentityMultiplexer": DW_IdentityMultiplexer
-}
-NODE_DISPLAY_NAME_MAPPINGS = {
-    "DW_IdentityMultiplexer": "DW Identity Multiplexer"
-}
+NODE_CLASS_MAPPINGS = {"DW_IdentityMultiplexer": DW_IdentityMultiplexer}
+NODE_DISPLAY_NAME_MAPPINGS = {"DW_IdentityMultiplexer": "DW Identity Multiplexer"}
