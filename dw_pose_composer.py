@@ -16,6 +16,7 @@ class SceneDTO:
     height: int
     floor_y_percent: float
     global_scale: float
+    camera_elevation: float = 0.0 # FIX: Perspective anchor
     seed: Optional[int] = None
     original_characters: Optional[List['CharacterDTO']] = None
 
@@ -50,7 +51,7 @@ POSE_PAIRS = [
 # ==========================================
 class BiometricFactory:
     @staticmethod
-    def get_metrics(char: CharacterDTO, base_height: int) -> Dict[str, float]:
+    def get_metrics(char: CharacterDTO, base_height: int, camera_elevation: float = 0.0) -> Dict[str, float]:
         female_mod = 1.05 if char.gender == "female" else 1.0
         height_map = {"elder": 0.95, "adult": 1.0, "teenager": 0.85, "child": 0.6, "baby": 0.35}
         head_map = {"elder": 8.0, "adult": 8.0, "teenager": 7.0, "child": 6.0, "baby": 4.0 * female_mod}
@@ -60,13 +61,17 @@ class BiometricFactory:
         h_ratio = head_map.get(char.age_group, 8.0)
         w_mod = width_map.get(char.build, 1.0)
         
-        total_pixels = int(base_height * rel_h)
-        head_pixels = int(total_pixels / h_ratio)
+        # FIX: Foreshortening (Perspective Distortion)
+        perspective_head_mod = 1.0 + (camera_elevation * 0.15)
+        perspective_leg_mod = 1.0 - (camera_elevation * 0.15)
+        
+        total_pixels = int(base_height * rel_h * (1.0 - abs(camera_elevation) * 0.05))
+        head_pixels = int((total_pixels / h_ratio) * perspective_head_mod)
         
         shoulder_width = int(head_pixels * 1.55 * w_mod)
         hip_width = int(shoulder_width * 0.70)
         arm_len = int(total_pixels * 0.4)
-        leg_len = int(total_pixels * 0.5)
+        leg_len = int(total_pixels * 0.5 * perspective_leg_mod)
 
         if char.age_group == "baby":
             shoulder_width = int(head_pixels * 1.15 * w_mod)
@@ -312,6 +317,7 @@ class DW_DynamicPoseComposer:
                 "height": ("INT", {"default": 1024, "min": 512, "max": 4096, "step": 8}),
                 "floor_y_percent": ("FLOAT", {"default": 0.85, "min": 0.5, "max": 1.0, "step": 0.01}),
                 "global_scale": ("FLOAT", {"default": 0.70, "min": 0.3, "max": 2.0, "step": 0.01}),
+                "camera_elevation": ("FLOAT", {"default": 0.0, "min": -1.0, "max": 1.0, "step": 0.05}),
                 "vision_context": ("STRING", {"forceInput": True, "multiline": True}),
                 "clip": ("CLIP",),
                 "global_positive": ("STRING", {"multiline": True, "default": "RAW photo, 8k uhd, dslr"}),
@@ -324,7 +330,7 @@ class DW_DynamicPoseComposer:
     FUNCTION = "generate_rigs"
     CATEGORY = "DW_Nodes/Pose"
 
-    def generate_rigs(self, width: int, height: int, floor_y_percent: float, global_scale: float, vision_context: str, clip, global_positive: str, global_negative: str):
+    def generate_rigs(self, width: int, height: int, floor_y_percent: float, global_scale: float, camera_elevation: float, vision_context: str, clip, global_positive: str, global_negative: str):
         
         import json
         
@@ -364,6 +370,7 @@ class DW_DynamicPoseComposer:
             width=width, height=height,
             floor_y_percent=floor_y_percent,
             global_scale=global_scale,
+            camera_elevation=camera_elevation,
             seed=rng_seed
         )
 
@@ -466,7 +473,7 @@ class DW_DynamicPoseComposer:
         floor_y = int(height * scene.floor_y_percent)
         
         for char in characters:
-            metrics = BiometricFactory.get_metrics(char, base_h)
+            metrics = BiometricFactory.get_metrics(char, base_h, camera_elevation)
             if char.parent_id:
                 char.z_index = 99999 
             elif char.is_holding_baby:
@@ -481,7 +488,7 @@ class DW_DynamicPoseComposer:
         cluster_total_width = 0
         
         for char in independent_chars:
-            metrics = BiometricFactory.get_metrics(char, base_h)
+            metrics = BiometricFactory.get_metrics(char, base_h, camera_elevation)
             spacing_factor = 0.75 if char.age_group in ["adult", "elder", "teenager"] else 0.40
             personal_space = int(metrics["shoulder_w"] * spacing_factor)
             padded_width = metrics["shoulder_w"] + personal_space
@@ -566,31 +573,48 @@ class DW_DynamicPoseComposer:
             v_data = parsed_chars_data[i] if i < len(parsed_chars_data) else None
             
             if v_data:
-                # FIX: Atomic assembly of hair geometry and color
-                hair_len_vol = f"{v_data.get('hair_length', '')} {v_data.get('hair_volume', '')}".strip()
-                hair_color_tex = f"{v_data.get('hair_texture', '')} {v_data.get('hair_color', '')}".strip()
+                # FIX: Natural Language Grammatical Assembly
+                skin = v_data.get('skin', 'natural')
+                if "skin" not in skin: skin += " skin"
                 
-                if 'bald' in hair_color_tex or 'bald' in hair_len_vol:
-                    final_hair = "bald"
+                eyes = v_data.get('eyes', 'brown')
+                if "eyes" not in eyes: eyes += " eyes"
+
+                hair_len = v_data.get('hair_length', '')
+                hair_vol = v_data.get('hair_volume', '')
+                hair_tex = v_data.get('hair_texture', '')
+                hair_color = v_data.get('hair_color', '')
+                
+                if 'bald' in hair_len or 'bald' in hair_tex or 'bald' in hair_color:
+                    final_hair = "bald head"
                 else:
-                    final_hair = f"{hair_len_vol} {hair_color_tex} hair".strip()
+                    final_hair = f"{hair_len} {hair_vol} {hair_tex} {hair_color} hair"
+                final_hair = " ".join(final_hair.split())
                 
-                glasses = ", wearing glasses" if "no" not in v_data.get("glasses", "no") else ""
-                beard = f", {v_data.get('beard', '')}" if "no" not in v_data.get('beard', 'no') else ""
+                beard = v_data.get('beard', 'no beard')
+                beard_str = f"with a {beard}" if "no" not in beard else "clean-shaven"
                 
-                traits = f"{v_data.get('skin', 'natural skin')}, {final_hair}, {v_data.get('eyes', 'eyes')}{beard}{glasses}"
+                glasses = v_data.get('glasses', 'no glasses')
+                glasses_str = f"wearing {glasses}" if "no" not in glasses else ""
+
+                traits = f"having {skin}, {eyes}, and {final_hair}, {beard_str}"
+                if glasses_str: traits += f", {glasses_str}"
                 
                 exact_age = v_data.get("exact_age", "adult")
                 build_cat = v_data.get("build_cat", "regular")
                 exact_build = v_data.get("exact_build", "average build")
                 outfit = v_data.get("outfit", "")
             else:
-                traits, exact_age, build_cat, exact_build, outfit = "detailed face", "adult", "regular", "regular build", "stylish casual clothes"
+                traits, exact_age, build_cat, exact_build, outfit = "having natural skin, brown eyes, detailed face", "adult", "regular", "regular build", "stylish casual clothes"
 
             clean_outfit = outfit.replace("wearing ", "").strip()
             
-            # FIX: Inject atomic hair parameters, build_cat, and anatomical ear anchoring
-            regional_text = f"A photorealistic {exact_age} {build_cat} {exact_build} {noun}, {traits}, perfectly shaped symmetric ears, wearing {clean_outfit}, {action_context}, cinematic lighting"
+            # FIX: Injecting Camera Perspective to solve ear flattening
+            perspective_shot = "eye-level shot"
+            if camera_elevation > 0.3: perspective_shot = "high angle shot, looking down"
+            elif camera_elevation < -0.3: perspective_shot = "low angle shot, looking up"
+            
+            regional_text = f"A photorealistic {exact_age} {build_cat} {exact_build} {noun}, {traits}, perfectly shaped symmetric ears, wearing {clean_outfit}, {action_context}, {perspective_shot}, cinematic lighting"
             
             regional_text = " ".join(regional_text.split())
             telemetry_lines.append(f"- **{char.char_id}**: `{regional_text}`")
