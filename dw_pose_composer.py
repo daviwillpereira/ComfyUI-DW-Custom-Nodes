@@ -389,7 +389,10 @@ class DW_DynamicPoseComposer:
                 "build_cat": raw.get("physical_build", raw.get("build_cat", "regular")).lower(),
                 "exact_build": raw.get("exact_build", "average build").lower(),
                 "skin": raw.get("skin_tone", raw.get("skin", "natural skin")).lower(),
-                "hair": raw.get("hair_style_and_color", raw.get("hair", "simple hair")).lower(),
+                "hair_length": raw.get("hair_length", "").lower(),
+                "hair_volume": raw.get("hair_volume", "").lower(),
+                "hair_color": raw.get("hair_color", "dark").lower(),
+                "hair_texture": raw.get("hair_texture", "straight").lower(),
                 "eyes": raw.get("eyes", "brown eyes").lower(),
                 "beard": raw.get("beard_style_and_color", raw.get("beard", "no beard")).lower(),
                 "glasses": raw.get("glasses", "no glasses").lower(),
@@ -419,7 +422,7 @@ class DW_DynamicPoseComposer:
             beard = f", {v_data['beard']}" if "no" not in v_data['beard'] else ""
             traits = f"{v_data['skin']}, {v_data['hair']}, {v_data['eyes']}{beard}{glasses}"
                 
-            # SOTA FIX: Inject build_cat ("slim", etc) explicitly to prevent SDXL default muscle bias
+            # FIX: Inject build_cat ("slim", etc) explicitly to prevent SDXL default muscle bias
             phenotype_line = f"{v_data['exact_age']} {v_data['build_cat']} {v_data['exact_build']} {char.gender}, {traits}"
             phenotypes_list.append(phenotype_line)
             
@@ -552,21 +555,33 @@ class DW_DynamicPoseComposer:
             v_data = parsed_chars_data[i] if i < len(parsed_chars_data) else None
             
             if v_data:
-                glasses = ", wearing glasses" if "no" not in v_data["glasses"] else ""
-                beard = f", {v_data['beard']}" if "no" not in v_data['beard'] else ""
-                traits = f"{v_data['skin']}, {v_data['hair']}, {v_data['eyes']}{beard}{glasses}"
-                exact_age = v_data["exact_age"]
-                # SOTA FIX: Extract build_cat to include "slim" in the prompt
-                build_cat = v_data["build_cat"]
-                exact_build = v_data["exact_build"]
-                outfit = v_data["outfit"]
+                # FIX: Atomic assembly of hair geometry and color
+                hair_len_vol = f"{v_data.get('hair_length', '')} {v_data.get('hair_volume', '')}".strip()
+                hair_color_tex = f"{v_data.get('hair_texture', '')} {v_data.get('hair_color', '')}".strip()
+                
+                if 'bald' in hair_color_tex or 'bald' in hair_len_vol:
+                    final_hair = "bald"
+                else:
+                    final_hair = f"{hair_len_vol} {hair_color_tex} hair".strip()
+                
+                glasses = ", wearing glasses" if "no" not in v_data.get("glasses", "no") else ""
+                beard = f", {v_data.get('beard', '')}" if "no" not in v_data.get('beard', 'no') else ""
+                
+                traits = f"{v_data.get('skin', 'natural skin')}, {final_hair}, {v_data.get('eyes', 'eyes')}{beard}{glasses}"
+                
+                exact_age = v_data.get("exact_age", "adult")
+                build_cat = v_data.get("build_cat", "regular")
+                exact_build = v_data.get("exact_build", "average build")
+                outfit = v_data.get("outfit", "")
             else:
                 traits, exact_age, build_cat, exact_build, outfit = "detailed face", "adult", "regular", "regular build", "stylish casual clothes"
 
             clean_outfit = outfit.replace("wearing ", "").strip()
             
-            # SOTA FIX: Inject build_cat into the CLIP prompt
-            regional_text = f"A photorealistic {exact_age} {build_cat} {exact_build} {noun}, {traits}, wearing {clean_outfit}, {action_context}, cinematic lighting"
+            # FIX: Inject atomic hair parameters, build_cat, and anatomical ear anchoring
+            regional_text = f"A photorealistic {exact_age} {build_cat} {exact_build} {noun}, {traits}, perfectly shaped symmetric ears, wearing {clean_outfit}, {action_context}, cinematic lighting"
+            
+            regional_text = " ".join(regional_text.split())
             telemetry_lines.append(f"- **{char.char_id}**: `{regional_text}`")
             
             reg_cond, = clip_encoder.encode(clip, regional_text)
