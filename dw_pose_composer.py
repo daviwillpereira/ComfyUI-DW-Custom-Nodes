@@ -418,13 +418,24 @@ class DW_DynamicPoseComposer:
                 build=v_data["build_cat"]
             )
             
-            glasses = ", wearing glasses" if "no" not in v_data["glasses"] else ""
-            beard = f", {v_data['beard']}" if "no" not in v_data['beard'] else ""
-            traits = f"{v_data['skin']}, {v_data['hair']}, {v_data['eyes']}{beard}{glasses}"
+            # FIX: Atomic assembly of hair for the PHENOTYPES string
+            hair_len_vol = f"{v_data.get('hair_length', '')} {v_data.get('hair_volume', '')}".strip()
+            hair_color_tex = f"{v_data.get('hair_texture', '')} {v_data.get('hair_color', '')}".strip()
+            
+            if 'bald' in hair_color_tex or 'bald' in hair_len_vol:
+                final_hair = "bald"
+            else:
+                final_hair = f"{hair_len_vol} {hair_color_tex} hair".strip()
+            
+            glasses = ", wearing glasses" if "no" not in v_data.get("glasses", "no") else ""
+            beard = f", {v_data.get('beard', '')}" if "no" not in v_data.get('beard', 'no') else ""
+            
+            # FIX: Replaced legacy 'hair' key with 'final_hair'
+            traits = f"{v_data.get('skin', 'natural skin')}, {final_hair}, {v_data.get('eyes', 'eyes')}{beard}{glasses}"
                 
-            # FIX: Inject build_cat ("slim", etc) explicitly to prevent SDXL default muscle bias
-            phenotype_line = f"{v_data['exact_age']} {v_data['build_cat']} {v_data['exact_build']} {char.gender}, {traits}"
-            phenotypes_list.append(phenotype_line)
+            # FIX: Inject build_cat explicitly
+            phenotype_line = f"{v_data.get('exact_age', '')} {v_data.get('build_cat', '')} {v_data.get('exact_build', '')} {char.gender}, {traits}"
+            phenotypes_list.append(" ".join(phenotype_line.split()))
             
             if char.age_group == "baby":
                 free_adults = [a for a in available_adults if a not in used_adults]
