@@ -40,8 +40,8 @@ class DW_IdentityMultiplexer:
             }
         }
 
-    RETURN_TYPES = ("MODEL", "CONDITIONING", "CONDITIONING", "MASK", "STRING")
-    RETURN_NAMES = ("MODEL", "POSITIVE", "NEGATIVE", "DEBUG_MASKS", "TELEMETRY_REPORT")
+    RETURN_TYPES = ("MODEL", "CONDITIONING", "CONDITIONING", "MASK", "MASK", "STRING")
+    RETURN_NAMES = ("MODEL", "POSITIVE", "NEGATIVE", "DEBUG_MASKS", "COMBINED_MASK", "TELEMETRY_REPORT")
     FUNCTION = "multiplex_pipeline"
     CATEGORY = "DW_Nodes/Identity"
 
@@ -172,7 +172,9 @@ class DW_IdentityMultiplexer:
         for pos in accumulated_positive: final_positive, = combine_node.combine(final_positive, pos)
         for neg in accumulated_negative: final_negative, = combine_node.combine(final_negative, neg)
 
-        return (final_model, final_positive, final_negative, face_masks_batch, "\n".join(telemetry))
+        combined_mask = torch.clamp(torch.sum(face_masks_batch, dim=0), 0.0, 1.0)
+
+        return (final_model, final_positive, final_negative, face_masks_batch, combined_mask, "\n".join(telemetry))
 
 # --- REGISTRATION ---
 NODE_CLASS_MAPPINGS = {"DW_IdentityMultiplexer": DW_IdentityMultiplexer}
