@@ -3,7 +3,7 @@ import torch
 import numpy as np
 import cv2
 import random
-import nodes # V16  FIX: Importa o motor Core do ComfyUI
+import nodes
 from dataclasses import dataclass
 from typing import List, Tuple, Dict, Optional
 
@@ -17,7 +17,7 @@ class SceneDTO:
     floor_y_percent: float
     global_scale: float
     seed: Optional[int] = None
-    original_characters: Optional[List['CharacterDTO']] = None # V28  FIX (Tipagem Correta)
+    original_characters: Optional[List['CharacterDTO']] = None
 
 @dataclass
 class CharacterDTO:
@@ -30,7 +30,7 @@ class CharacterDTO:
     is_holding_baby: bool = False
     keypoints: Optional[Dict[int, Tuple[int, int]]] = None
 
-# Official OpenPose RGB Color Table (18 keypoints)
+# Official OpenPose RGB Color Table
 POSE_COLORS = [
     (255, 0, 0), (255, 85, 0), (255, 170, 0), (255, 255, 0), 
     (170, 255, 0), (85, 255, 0), (0, 255, 0), (0, 255, 85), 
@@ -39,7 +39,6 @@ POSE_COLORS = [
     (255, 0, 170), (255, 0, 85)
 ]
 
-# Bone Connections (Pairs)
 POSE_PAIRS = [
     (1, 2), (1, 5), (2, 3), (3, 4), (5, 6), (6, 7),
     (1, 8), (8, 9), (9, 10), (1, 11), (11, 12), (12, 13),
@@ -47,15 +46,12 @@ POSE_PAIRS = [
 ]
 
 # ==========================================
-# 2. Biometric Engine & Factory (V7 )
+# 2. Biometric Engine & Factory
 # ==========================================
 class BiometricFactory:
-    """Factory Pattern to generate parametric bone structures with Ground Truth kinetics."""
-    
     @staticmethod
     def get_metrics(char: CharacterDTO, base_height: int) -> Dict[str, float]:
         female_mod = 1.05 if char.gender == "female" else 1.0
-
         height_map = {"elder": 0.95, "adult": 1.0, "teenager": 0.85, "child": 0.6, "baby": 0.35}
         head_map = {"elder": 8.0, "adult": 8.0, "teenager": 7.0, "child": 6.0, "baby": 4.0 * female_mod}
         width_map = {"slim": 0.85, "regular": 1.0, "muscular": 1.15, "heavy": 1.25}
@@ -67,14 +63,11 @@ class BiometricFactory:
         total_pixels = int(base_height * rel_h)
         head_pixels = int(total_pixels / h_ratio)
         
-        # V13  FIX: Shoulders 1.55x, Hips 0.7x of shoulders (anatomical base)
         shoulder_width = int(head_pixels * 1.55 * w_mod)
         hip_width = int(shoulder_width * 0.70)
-        
         arm_len = int(total_pixels * 0.4)
         leg_len = int(total_pixels * 0.5)
 
-        # V13  FIX: Baby specific proportions (short legs, narrow shoulders)
         if char.age_group == "baby":
             shoulder_width = int(head_pixels * 1.15 * w_mod)
             hip_width = int(shoulder_width * 0.80)
@@ -108,11 +101,8 @@ class BiometricFactory:
             head_tilt = -shoulder_tilt * 0.8 + rng_context.uniform(-0.05, 0.05) * hh
             spine_curvature_offset = rng_context.uniform(-0.15, 0.15) * hh
             
-        # --- Stage 1: Core & Curved Spine ---
         if char.parent_id and parent_kps:
-            # V23  FIX: Perfil Estrito com Amputação Paramétrica Limpa
             is_left_hip = getattr(char, "_is_left_hip", True)
-
             hip_idx = 11 if is_left_hip else 8
             adult_hip = parent_kps.get(hip_idx, (anchor_x, anchor_y))
             adult_neck = parent_kps.get(1, (anchor_x, anchor_y - int(th*0.8)))
@@ -120,14 +110,12 @@ class BiometricFactory:
             waist_y = adult_hip[1] - int((adult_hip[1] - adult_neck[1]) * 0.3)
             baby_torso_len = int(th * 0.39)
             
-            # Inclina na direção do adulto
             lean_direction = -1 if is_left_hip else 1 
             lean_offset = int(hw * 0.3) * lean_direction
             
             kps[1] = (adult_hip[0] + lean_offset, waist_y - baby_torso_len)
             kps[0] = (kps[1][0], kps[1][1] - hh)
             
-            # Amputação do quadril oculto (Só desenhamos o quadril visível)
             if is_left_hip:
                 kps[11] = (adult_hip[0], waist_y)
             else:
@@ -147,7 +135,6 @@ class BiometricFactory:
             kps[1] = (int(anchor_x + shoulder_tilt - spine_curvature_offset*0.5), neck_y) 
             kps[0] = (int(kps[1][0] + head_tilt), kps[1][1] - hh)
         
-        # --- Stage 2: Face ---
         face_offset_x = int(hh * 0.2)
         face_offset_y = int(hh * 0.2)
         kps[14] = (kps[0][0] - face_offset_x, int(kps[0][1] - face_offset_y - head_tilt))
@@ -156,10 +143,8 @@ class BiometricFactory:
         kps[16] = (kps[0][0] - ear_offset_x, int(kps[0][1] - head_tilt))
         kps[17] = (kps[0][0] + ear_offset_x, int(kps[0][1] + head_tilt))
         
-        # --- Shoulders ---
         shoulder_drop = int(hh * 0.05) 
         if char.parent_id:
-            # V23  FIX: Amputação do ombro oculto
             is_left_hip = getattr(char, "_is_left_hip", True)
             if is_left_hip:
                 kps[5] = (kps[1][0], kps[1][1] + shoulder_drop) 
@@ -169,19 +154,15 @@ class BiometricFactory:
             kps[2] = (kps[1][0] - sw//2, kps[1][1] + shoulder_drop + int(shoulder_tilt)) 
             kps[5] = (kps[1][0] + sw//2, kps[1][1] + shoulder_drop - int(shoulder_tilt))
         
-        # --- Arms ---
         if char.parent_id:
-            # V23  FIX: O braço visível abraça o adulto, o outro é amputado
             is_left_hip = getattr(char, "_is_left_hip", True)
             wrap_direction = -1 if is_left_hip else 1
             arm_reach_x = int(arm_l * 0.4) * wrap_direction
             
             if is_left_hip:
-                # Omitimos o direito, desenhamos o esquerdo abraçando
                 kps[6] = (kps[5][0] + arm_reach_x, kps[5][1] + int(arm_l*0.2))
                 kps[7] = (kps[6][0] + int(arm_l*0.2)*wrap_direction, kps[6][1] - int(arm_l*0.1)) 
             else:
-                # Omitimos o esquerdo, desenhamos o direito abraçando
                 kps[3] = (kps[2][0] + arm_reach_x, kps[2][1] + int(arm_l*0.2))
                 kps[4] = (kps[3][0] + int(arm_l*0.2)*wrap_direction, kps[3][1] - int(arm_l*0.1)) 
         elif char.age_group == "baby":
@@ -193,10 +174,7 @@ class BiometricFactory:
             kps[7] = (kps[6][0], anchor_y)
         elif char.is_holding_baby:
             holding_left = getattr(char, "_holding_baby_on_left", True)
-            
-            # V25  FIX: Braço relaxado rente ao corpo (Evita cruzar Bounding Box)
             arm_swing_relax = rng_context.uniform(0.05, 0.08) * arm_l
-            
             elbow_drop_hold = int(arm_l * 0.70)
             wrist_cross_x = int(hw * 0.6) 
             
@@ -211,7 +189,6 @@ class BiometricFactory:
                 kps[6] = (kps[5][0] + int(arm_swing_relax), kps[5][1] + int(arm_l*0.5))
                 kps[7] = (kps[6][0] + int(arm_l*0.05), kps[6][1] + int(arm_l*0.5))
         else:
-            # V25  FIX: Braços rentes ao corpo no cluster
             arm_swing_r = rng_context.uniform(0.05, 0.08) * arm_l
             kps[3] = (kps[2][0] - int(arm_swing_r), kps[2][1] + int(arm_l*0.5))
             kps[4] = (kps[3][0] - int(arm_l*0.05), kps[3][1] + int(arm_l*0.5))
@@ -219,9 +196,7 @@ class BiometricFactory:
             kps[6] = (kps[5][0] + int(arm_swing_l), kps[5][1] + int(arm_l*0.5))
             kps[7] = (kps[6][0] + int(arm_l*0.05), kps[6][1] + int(arm_l*0.5))
         
-        # --- Legs ---
         if char.parent_id:
-            # V23  FIX: A perna visível "abraça" a cintura, a outra é amputada
             is_left_hip = getattr(char, "_is_left_hip", True)
             knee_drop = int(leg_l * 0.3)
             ankle_drop = int(leg_l * 0.5)
@@ -257,8 +232,6 @@ class BiometricFactory:
 # 3. Graphics & Z-Buffer Engine
 # ==========================================
 class OpenPoseRenderer:
-    """Handles spatial drawing and Volumetric Boolean subtraction for Masks."""
-    
     def __init__(self, scene: SceneDTO):
         self.scene = scene
         self.blur_kernel = (11, 11)
@@ -268,58 +241,45 @@ class OpenPoseRenderer:
         global_z_buffer = np.zeros((self.scene.height, self.scene.width), dtype=np.uint8)
         masks = {}
 
-        # STAGE 1: VOLUMETRIC MASK CALCULATION (Front-to-Back)
-        # We need this Stage to handle Boolean subtraction BEFORE we blur,
-        # otherwise we get semantic bleeding
         sorted_chars_masks = sorted(characters, key=lambda c: c.z_index, reverse=True)
         
         for char in sorted_chars_masks:
             char_mask = np.zeros((self.scene.height, self.scene.width), dtype=np.uint8)
             
-            # V27  FIX: Mask Dilation Otimizada (Corpo magro, Cabeça gorda)
-            # Reduzimos a espessura dos membros drasticamente para evitar Semantic Bleeding
             base_thickness = 50 if char.build in ["heavy", "muscular"] else 35
             if char.age_group in ["child", "baby"]:
                 base_thickness = int(base_thickness * 0.7)
 
-            #  FIX: Draw Torso Volume (Solid Polygon)
             if all(k in char.keypoints for k in [1, 2, 5, 8, 11]):
                 torso_pts = np.array([
-                    char.keypoints[2],  # RShoulder
-                    char.keypoints[5],  # LShoulder
-                    char.keypoints[11], # LHip
-                    char.keypoints[8],  # RHip
+                    char.keypoints[2], 
+                    char.keypoints[5], 
+                    char.keypoints[11],
+                    char.keypoints[8], 
                 ], np.int32)
                 cv2.fillPoly(char_mask, [torso_pts], 255)
             
-            # Draw Thick Limbs
             for pair in POSE_PAIRS:
                 if pair[0] in char.keypoints and pair[1] in char.keypoints:
                     pt1 = char.keypoints[pair[0]]
                     pt2 = char.keypoints[pair[1]]
                     cv2.line(char_mask, pt1, pt2, 255, thickness=base_thickness)
             
-            # V15  FIX: Expanded Head Volume for Hair Generation
             if 0 in char.keypoints:
                 head_radius = 85 if char.gender == "female" else 75
                 if char.age_group in ["child", "baby"]:
                     head_radius = int(head_radius * 0.7)
                 cv2.circle(char_mask, char.keypoints[0], head_radius, 255, thickness=-1)
 
-            # Apply Gaussian Blur BEFORE Z-Buffer subtraction to ensure clean edge preservation
             blurred_char_mask = cv2.GaussianBlur(char_mask, self.blur_kernel, 0)
             char_mask_exclusive = cv2.bitwise_and(blurred_char_mask, cv2.bitwise_not(global_z_buffer))
             masks[char.char_id] = char_mask_exclusive
             
-            # Update the Global Z-Buffer with the HARD mask (no blur) to reserve space
             global_z_buffer = cv2.bitwise_or(global_z_buffer, char_mask)
 
-        # STAGE 2: OPENPOSE CANVAS DRAWING (Back-to-Front)
-        # Prevents visual overwrite by painting lines over background figures
         sorted_chars_canvas = sorted(characters, key=lambda c: c.z_index, reverse=False)
         
         for char in sorted_chars_canvas:
-            # Draw the colored OpenPose Skeleton
             for pair in POSE_PAIRS:
                 if pair[0] in char.keypoints and pair[1] in char.keypoints:
                     pt1 = char.keypoints[pair[0]]
@@ -331,8 +291,6 @@ class OpenPoseRenderer:
                 color = POSE_COLORS[k]
                 cv2.circle(canvas, pt, 4, color, thickness=-1, lineType=cv2.LINE_AA)
 
-        # V28  FIX: Preservação Estrita do Índice Original (Garante que Máscara 0 = Char 1)
-        # Em vez de pegar a ordem bagunçada pelo Z-Buffer, iteramos o scene characters original
         mask_list = [torch.from_numpy(masks[c.char_id]).float() / 255.0 for c in self.scene.original_characters]
         masks_tensor = torch.stack(mask_list) if mask_list else torch.empty((0, self.scene.height, self.scene.width))
         
@@ -370,9 +328,6 @@ class DW_DynamicPoseComposer:
         
         import json
         
-        # =======================================================
-        # 1. Parse Character Vision Context (Strict JSON Array)
-        # =======================================================
         try:
             vision_data_list = json.loads(vision_context)
             if not isinstance(vision_data_list, list):
@@ -384,11 +339,6 @@ class DW_DynamicPoseComposer:
         if num_characters == 0:
             raise ValueError("[DW] Critical Error: vision_context is empty.")
 
-        # =======================================================
-        # 2. Dynamic Background JSON Interception
-        # =======================================================
-        # If Background Qwen output is connected here, it parses the JSON.
-        # If a manual text prompt is connected, it passes straight through.
         try:
             bg_data = json.loads(global_positive)
             if isinstance(bg_data, list) and len(bg_data) > 0 and isinstance(bg_data[0], dict):
@@ -402,11 +352,10 @@ class DW_DynamicPoseComposer:
                 if bg_dict.get("camera_properties"): parts.append(bg_dict["camera_properties"])
                 
                 parsed_global_positive = ", ".join([str(p).strip() for p in parts if str(p).strip()])
-                print(f"[DW_INFO] Background JSON dynamically parsed: {parsed_global_positive}")
             else:
                 parsed_global_positive = global_positive
         except Exception:
-            parsed_global_positive = global_positive # Fallback to standard text string
+            parsed_global_positive = global_positive
 
         rng_seed = random.randint(0, 9999999)
         rng_context = random.Random(rng_seed)
@@ -422,13 +371,9 @@ class DW_DynamicPoseComposer:
         phenotypes_list = []
         parsed_chars_data = []
         
-        # =======================================================
-        # 3. Clean and map Character properties resiliently
-        # =======================================================
         for i in range(num_characters):
             raw = vision_data_list[i]
             
-            # 3-Piece Outfit Composition
             outfit_upper = raw.get("outfit_upper", "")
             outfit_lower = raw.get("outfit_lower", "")
             outfit_footwear = raw.get("outfit_footwear", "")
@@ -474,7 +419,8 @@ class DW_DynamicPoseComposer:
             beard = f", {v_data['beard']}" if "no" not in v_data['beard'] else ""
             traits = f"{v_data['skin']}, {v_data['hair']}, {v_data['eyes']}{beard}{glasses}"
                 
-            phenotype_line = f"{v_data['exact_age']} {v_data['exact_build']} {char.gender}, {traits}"
+            # SOTA FIX: Inject build_cat ("slim", etc) explicitly to prevent SDXL default muscle bias
+            phenotype_line = f"{v_data['exact_age']} {v_data['build_cat']} {v_data['exact_build']} {char.gender}, {traits}"
             phenotypes_list.append(phenotype_line)
             
             if char.age_group == "baby":
@@ -496,63 +442,45 @@ class DW_DynamicPoseComposer:
                 parent_char = next((c for c in characters if c.char_id == char.parent_id), None)
                 if parent_char:
                     parent_char.is_holding_baby = True
-                    # V22  FIX: Decide de qual lado o adulto vai segurar o bebê ANTES de desenhar
                     parent_char._holding_baby_on_left = rng_context.choice([True, False])
                     char._is_left_hip = parent_char._holding_baby_on_left
 
-        scene.original_characters = list(characters) # V28  FIX: Trava a ordem original
+        scene.original_characters = list(characters)
 
-        # Process independent adults first, then dependent babies
         processing_order = sorted(characters, key=lambda c: c.parent_id is not None)
-
-        # Cinematic base height lock
         base_h = int(height * 0.7 * scene.global_scale)
-        # Floor anchoring lock
         floor_y = int(height * scene.floor_y_percent)
         
-        # V25  FIX: Dynamic Z-Index Oclusion Engine (Strict Hierarchy)
-        # Garante sincronia perfeita entre Máscaras e Canvas
         for char in characters:
             metrics = BiometricFactory.get_metrics(char, base_h)
             if char.parent_id:
-                char.z_index = 99999 # Top priority (Bebês no colo)
+                char.z_index = 99999 
             elif char.is_holding_baby:
-                char.z_index = 50000 # Adulto com bebê dá um passo à frente
+                char.z_index = 50000 
             else:
-                # Adultos/Crianças livres ficam no fundo
                 char.z_index = int(10000 / metrics["total_h"])
 
-        # V26  FIX: Dynamic Bounding Box with Anti-Fusion Padding
         independent_chars = [c for c in processing_order if not c.parent_id]
         dependent_chars = [c for c in processing_order if c.parent_id]
         
         char_metrics = []
         cluster_total_width = 0
         
-        # Pré-cálculo das larguras com padding (O(N) Sweep)
         for char in independent_chars:
             metrics = BiometricFactory.get_metrics(char, base_h)
-            
-            # V27  FIX: Aumento do Distanciamento Paramétrico
-            # Adultos recebem 75% de folga extra; crianças 40%
             spacing_factor = 0.75 if char.age_group in ["adult", "elder", "teenager"] else 0.40
             personal_space = int(metrics["shoulder_w"] * spacing_factor)
-            
             padded_width = metrics["shoulder_w"] + personal_space
             char_metrics.append((char, metrics, padded_width))
             cluster_total_width += padded_width
             
-        # Ponto de partida X para o cluster ficar perfeitamente centrado no Canvas
         start_x = (width - cluster_total_width) // 2 if cluster_total_width < width else 50
         x_current = start_x
         
         adult_anchors = {} 
         
-        # 1. Process Independent Adults/Children (1D Layout)
         for i, (char, metrics, padded_width) in enumerate(char_metrics):
             char_center_x = x_current + (padded_width // 2)
-            
-            # Z-Depth Jitter (micro passo no eixo Y para evitar clipping perfeito nos ombros)
             y_jitter = int(metrics["head_h"] * 0.08) if i % 2 == 0 else 0
             
             char.keypoints = BiometricFactory.build_skeleton(char, char_center_x, floor_y + y_jitter, metrics, rng_context)
@@ -560,17 +488,14 @@ class DW_DynamicPoseComposer:
             
             x_current += padded_width
 
-        # 2. Process Dependent Babies (Dependency Injection)
         for char in dependent_chars:
             metrics = BiometricFactory.get_metrics(char, base_h)
             parent_kps = adult_anchors.get(char.parent_id, None)
             char.keypoints = BiometricFactory.build_skeleton(char, 0, 0, metrics, rng_context, parent_kps=parent_kps)
 
-        # Render stage
         renderer = OpenPoseRenderer(scene)
         pose_canvas_np, masks_tensor, bg_mask_tensor = renderer.draw_pose_and_masks(characters)
         
-        # Convert RGB Numpy canvas to ComfyUI Tensor [Batch, H, W, C]
         pose_canvas_tensor = torch.from_numpy(pose_canvas_np).float() / 255.0
         pose_canvas_tensor = pose_canvas_tensor.unsqueeze(0)
 
@@ -591,14 +516,10 @@ class DW_DynamicPoseComposer:
             
         pose_keypoint_str = json.dumps([{"people": people, "canvas_height": height, "canvas_width": width}])
 
-        # =========================================================
-        # V18 FIX: Telemetry, Wardrobe & BG Masking
-        # =========================================================
         clip_encoder = nodes.CLIPTextEncode()
         cond_set_mask = nodes.ConditioningSetMask()
         cond_combine = nodes.ConditioningCombine()
 
-        # FIX: Feed the parsed string, not the raw JSON array
         global_pos_cond_raw, = clip_encoder.encode(clip, parsed_global_positive)
         global_neg_cond, = clip_encoder.encode(clip, global_negative)
         
@@ -635,15 +556,17 @@ class DW_DynamicPoseComposer:
                 beard = f", {v_data['beard']}" if "no" not in v_data['beard'] else ""
                 traits = f"{v_data['skin']}, {v_data['hair']}, {v_data['eyes']}{beard}{glasses}"
                 exact_age = v_data["exact_age"]
+                # SOTA FIX: Extract build_cat to include "slim" in the prompt
+                build_cat = v_data["build_cat"]
                 exact_build = v_data["exact_build"]
                 outfit = v_data["outfit"]
             else:
-                traits, exact_age, exact_build, outfit = "detailed face", "adult", "regular build", "stylish casual clothes"
+                traits, exact_age, build_cat, exact_build, outfit = "detailed face", "adult", "regular", "regular build", "stylish casual clothes"
 
-            # Remove "wearing" if Qwen included it to prevent duplication
             clean_outfit = outfit.replace("wearing ", "").strip()
             
-            regional_text = f"A photorealistic {exact_age} {exact_build} {noun}, {traits}, wearing {clean_outfit}, {action_context}, cinematic lighting"
+            # SOTA FIX: Inject build_cat into the CLIP prompt
+            regional_text = f"A photorealistic {exact_age} {build_cat} {exact_build} {noun}, {traits}, wearing {clean_outfit}, {action_context}, cinematic lighting"
             telemetry_lines.append(f"- **{char.char_id}**: `{regional_text}`")
             
             reg_cond, = clip_encoder.encode(clip, regional_text)
