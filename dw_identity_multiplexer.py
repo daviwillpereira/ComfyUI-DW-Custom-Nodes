@@ -8,7 +8,8 @@ class DW_IdentityMultiplexer:
     O(N) Identity Injection Engine with Strict Face BBOX Isolation.
     Generates face-only dilated masks directly from SEGS to prevent 
     IP-Adapter semantic bleeding onto the body (clothing/background colors).
-    Includes strict Type Casting (NumPy to PyTorch Tensor) and morphological dilation.
+    Includes strict Type Casting (NumPy to PyTorch Tensor), morphological dilation,
+    and parametric background crowd filtering (bbox_drop_size).
     """
     @classmethod
     def INPUT_TYPES(cls):
@@ -30,6 +31,7 @@ class DW_IdentityMultiplexer:
                 "base_negative": ("CONDITIONING",),
                 "phenotypes_text": ("STRING", {"multiline": True, "forceInput": True}),
                 
+                "bbox_drop_size": ("INT", {"default": 150, "min": 1, "max": 2000, "step": 1}),
                 "mask_dilation": ("INT", {"default": 60, "min": 0, "max": 200, "step": 1}),
                 "ipadapter_weight": ("FLOAT", {"default": 0.80, "min": -1.0, "max": 3.0, "step": 0.01}),
                 "instantid_ip_weight": ("FLOAT", {"default": 0.85, "min": 0.0, "max": 3.0, "step": 0.01}),
@@ -60,11 +62,10 @@ class DW_IdentityMultiplexer:
             return mask
         mask_4d = mask.unsqueeze(0).unsqueeze(0)
         kernel_size = dilation * 2 + 1
-        # Max pool expands the white (1.0) areas mathematically
         dilated_mask_4d = F.max_pool2d(mask_4d, kernel_size=kernel_size, stride=1, padding=dilation)
         return dilated_mask_4d.squeeze(0).squeeze(0)
 
-    def multiplex_pipeline(self, model, ipadapter, instantid, insightface, control_net, body_image_batch, face_image_batch, p1_base_image, bbox_detector, clip, base_positive, base_negative, phenotypes_text, mask_dilation, ipadapter_weight, instantid_ip_weight, instantid_cn_strength, clip_vision=None):
+    def multiplex_pipeline(self, model, ipadapter, instantid, insightface, control_net, body_image_batch, face_image_batch, p1_base_image, bbox_detector, clip, base_positive, base_negative, phenotypes_text, bbox_drop_size, mask_dilation, ipadapter_weight, instantid_ip_weight, instantid_cn_strength, clip_vision=None):
         
         telemetry = ["# 🧬 DUAL-STREAM MULTIPLEXER REPORT", "---"]
         
@@ -80,16 +81,16 @@ class DW_IdentityMultiplexer:
 
         try:
             bbox_node = ImpactBbox()
-            # We request 0 dilation from YOLO to get the exact core face, we dilate mathematically later
+            # SOTA FIX: Injecting bbox_drop_size to cull background crowd faces
             segs_out = getattr(bbox_node, bbox_node.FUNCTION)(
-                bbox_detector, p1_base_image, threshold=0.3, dilation=0, crop_factor=1.0, drop_size=10, labels="face"
+                bbox_detector, p1_base_image, threshold=0.3, dilation=0, crop_factor=1.0, drop_size=bbox_drop_size, labels="face"
             )[0]
             
             canvas_shape = segs_out[0]
             seg_list = segs_out[1]
             
             if len(seg_list) == 0: 
-                raise ValueError("ERROR: YOLO detected 0 faces.")
+                raise ValueError(f"ERROR: YOLO detected 0 faces. Try lowering bbox_drop_size (Current: {bbox_drop_size}).")
             
             h, w = canvas_shape[0], canvas_shape[1]
             face_masks = []
@@ -101,7 +102,6 @@ class DW_IdentityMultiplexer:
                 canvas_mask = torch.zeros((h, w), dtype=torch.float32)
                 
                 if crop_mask is not None:
-                    # SOTA FIX: Type Casting Numpy array to PyTorch Tensor
                     if isinstance(crop_mask, np.ndarray):
                         crop_mask = torch.from_numpy(crop_mask)
                     
@@ -116,10 +116,7 @@ class DW_IdentityMultiplexer:
                 else:
                     canvas_mask[y1:y2, x1:x2] = 1.0 
                 
-                # SOTA FIX: Apply mathematical dilation to engulf hair
                 dilated_canvas_mask = self._dilate_mask_tensor(canvas_mask, mask_dilation)
-                
-                # Soften the edges of the dilated mask for perfect blending via average pool
                 smoothed_mask = F.avg_pool2d(dilated_canvas_mask.unsqueeze(0).unsqueeze(0), kernel_size=21, stride=1, padding=10).squeeze(0).squeeze(0)
                     
                 face_masks.append(smoothed_mask)
