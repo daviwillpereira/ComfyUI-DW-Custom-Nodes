@@ -125,7 +125,7 @@ class DW_QwenBatchExtractor:
         batch_size = images.shape[0]
         results = []
 
-        # SOTA FIX: Hardcoded Internal Prompts for Split-Domain Extraction
+        # FIX: Hardcoded Internal Prompts for Split-Domain Extraction
         PROMPT_BODY = 'Analyze this full-body image. Output STRICTLY JSON.\nKeys:\n"gender"("male"|"female"), "age_group"("baby"|"child"|"teenager"|"adult"|"elder"), "exact_age", "physical_build"("slim"|"regular"|"heavy"|"muscular"), "exact_build", "outfit_upper", "outfit_lower", "outfit_footwear"'
         PROMPT_BIO = 'Analyze this face. Output STRICTLY JSON.\nKeys:\n"eyes", "beard_style_and_color"("no beard" or describe), "glasses"("no glasses" or describe)'
         PROMPT_HAIR = 'Analyze ONLY the hair geometry. Look closely at the scalp. Output STRICTLY JSON.\nKeys:\n"hair_length"("short"|"shoulder-length"|"long"|"bald"), "hair_volume"("flat"|"thin"|"regular"|"thick"|"massive volume". If hair lies close to the head, it is "flat"), "hair_color", "hair_texture"("straight"|"wavy"|"curly"|"coily")'
