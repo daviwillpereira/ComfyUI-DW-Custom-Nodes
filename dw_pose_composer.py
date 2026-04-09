@@ -520,11 +520,11 @@ class DW_DynamicPoseComposer:
         final_pos_cond, = cond_set_mask.append(global_pos_cond_raw, bg_mask_tensor_unsqueeze, "default", 1.0)
 
         telemetry_lines = [
-            "# 📊  TELEMETRY REPORT", f"**Seed:** `{rng_seed}`", "---",
+            "# 📊 TELEMETRY REPORT", f"**Seed:** `{rng_seed}`", "---",
             "### 🧠 VLM RAW PAYLOADS",
             f"**BG Qwen:** `{global_positive}`",
             f"**Chars Qwen:** `{vision_context}`", "---",
-            f"### 🌍 GLOBAL PROMPTS",
+            "### 🌍 GLOBAL PROMPTS",
             f"**Spatial Engine:** `Scale: {global_scale} | Floor Y: {floor_y_percent} | Cam Elev: {camera_elevation}`",
             f"**Positive:** `{parsed_global_positive}`",
             f"**Negative:** `{global_negative}`", "---", "### 👤 REGIONAL PROMPTS (Multiplexed)"
@@ -579,10 +579,10 @@ class DW_DynamicPoseComposer:
         
         telemetry_report_str = "\n".join(telemetry_lines)
 
-        # FIX: Collapse the batch into a single 2D global mask for Depth Punching
-        combined_mask = torch.clamp(torch.sum(masks_tensor, dim=0), 0.0, 1.0)
+        # FIX: Collapse the batch into a single mask and preserve [1, H, W] dimension for ImageCompositeMasked
+        combined_mask = torch.clamp(torch.sum(masks_tensor, dim=0, keepdim=True), 0.0, 1.0)
 
         return (pose_canvas_tensor, masks_tensor, combined_mask, telemetry_report_str, final_pos_cond, global_neg_cond, phenotypes_output)
-        
+            
 NODE_CLASS_MAPPINGS = {"DW_DynamicPoseComposer": DW_DynamicPoseComposer}
 NODE_DISPLAY_NAME_MAPPINGS = {"DW_DynamicPoseComposer": "DW Dynamic Pose Composer"}
