@@ -322,8 +322,8 @@ class DW_DynamicPoseComposer:
             }
         }
 
-    RETURN_TYPES = ("IMAGE", "MASK", "STRING", "CONDITIONING", "CONDITIONING", "STRING")
-    RETURN_NAMES = ("POSE_CANVAS", "Z_BUFFER_MASKS", "TELEMETRY_REPORT", "POSITIVE", "NEGATIVE", "PHENOTYPES")
+    RETURN_TYPES = ("IMAGE", "MASK", "MASK", "STRING", "CONDITIONING", "CONDITIONING", "STRING")
+    RETURN_NAMES = ("POSE_CANVAS", "Z_BUFFER_MASKS", "COMBINED_MASK", "TELEMETRY_REPORT", "POSITIVE", "NEGATIVE", "PHENOTYPES")
     FUNCTION = "generate_rigs"
     CATEGORY = "DW_Nodes/Pose"
 
@@ -560,7 +560,12 @@ class DW_DynamicPoseComposer:
         telemetry_lines.append("### 🦴 RAW POSE JSON")
         telemetry_lines.append("```json\n" + pose_keypoint_str + "\n```")
         
-        return (pose_canvas_tensor, masks_tensor, "\n".join(telemetry_lines), final_pos_cond, global_neg_cond, phenotypes_output)
+        telemetry_report_str = "\n".join(telemetry_lines)
+
+        # FIX: Collapse the batch into a single 2D global mask for Depth Punching
+        combined_mask = torch.clamp(torch.sum(masks_tensor, dim=0), 0.0, 1.0)
+
+        return (pose_canvas_tensor, masks_tensor, combined_mask, telemetry_report_str, final_pos_cond, global_neg_cond, phenotypes_output)
         
 NODE_CLASS_MAPPINGS = {"DW_DynamicPoseComposer": DW_DynamicPoseComposer}
 NODE_DISPLAY_NAME_MAPPINGS = {"DW_DynamicPoseComposer": "DW Dynamic Pose Composer"}
