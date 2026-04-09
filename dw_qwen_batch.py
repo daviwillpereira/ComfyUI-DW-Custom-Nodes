@@ -127,9 +127,9 @@ class DW_QwenBatchExtractor:
 
         PROMPT_BODY = 'Analyze this full-body image. Output STRICTLY JSON. NEVER output "null" or "not visible".\nKeys:\n"gender"("male"|"female"), "age_group", "exact_age", "physical_build"("slim"|"regular"|"heavy"), "exact_build", "outfit_upper", "outfit_lower"(MUST be lower-body clothes like jeans/pants/skirt. NEVER output a shirt here), "outfit_footwear"(e.g., "sneakers")'
         
-        PROMPT_BIO = 'Analyze this face. Output STRICTLY JSON.\nKeys:\n"eyes"(e.g. "brown eyes"), "beard_style_and_color"(MUST include the noun. If none, output "clean-shaven"), "glasses"("no glasses" or describe)'
+        PROMPT_BIO = 'Analyze this face. Output STRICTLY JSON.\nKeys:\n"eyes"(e.g. "brown eyes"), "beard_style_and_color"(Specify density/length: "light stubble", "clean-shaven", "massive long beard", "goatee"), "glasses", "distinctive_features"("none" or specify VISIBLE anomalies/traits like "vitiligo", "heavy freckles", "birthmark", "facial scars")'
         
-        PROMPT_HAIR = 'Analyze ONLY the hair geometry. Output STRICTLY JSON.\nKeys:\n"hair_length"(For men, usually "short" unless visibly past the neck. For women, "short"|"shoulder-length"|"long"), "hair_volume"("flat"|"thin"|"regular"|"thick"), "hair_color"(Exact shade, e.g., "dark brown", "burgundy", "red", "black"), "hair_texture"("straight"|"wavy"|"curly")'
+        PROMPT_HAIR = 'Analyze ONLY the hair geometry. Output STRICTLY JSON.\nKeys:\n"hair_length", "hair_volume"("flat", "thin", "regular", "thick"), "hair_color"(Handle complex cases: "two-tone black and blonde", "salt and pepper", "pink dyed", or exact shades), "hair_texture"("straight", "wavy", "curly", "coily", "dreadlocks", "micro braids", "buzz cut", "bald"), "hair_style"("worn down", "ponytail", "man bun", "fade")'
         
         PROMPT_BG_SEMANTIC = 'Analyze background STRICTLY based on VISUAL EVIDENCE. If it is daytime, say day. Output STRICTLY JSON.\nKeys:\n"location_type"("famous_landmark"|"generic_location"), "location_name", "architecture_style", "ground_material", "lighting_conditions", "atmosphere"'
         

@@ -443,10 +443,12 @@ class DW_DynamicPoseComposer:
                 "build_cat": str(raw.get("physical_build") or raw.get("build_cat") or "regular").lower(),
                 "exact_build": str(raw.get("exact_build") or "average build").lower(),
                 "skin": str(raw.get("skin_tone") or raw.get("skin") or "natural skin").lower(),
+                "distinctive": str(raw.get("distinctive_features") or "none").lower(), # NOVO
                 "hair_length": str(raw.get("hair_length") or "").lower(),
                 "hair_volume": str(raw.get("hair_volume") or "").lower(),
                 "hair_color": str(raw.get("hair_color") or "dark").lower(),
                 "hair_texture": str(raw.get("hair_texture") or "straight").lower(),
+                "hair_style": str(raw.get("hair_style") or "worn down").lower(), # NOVO
                 "eyes": str(raw.get("eyes") or "brown eyes").lower(),
                 "beard": str(raw.get("beard_style_and_color") or raw.get("beard") or "no beard").lower(),
                 "glasses": str(raw.get("glasses") or "no glasses").lower(),
@@ -595,17 +597,24 @@ class DW_DynamicPoseComposer:
                 skin = v_data.get('skin', 'natural'); skin += " skin" if "skin" not in skin else ""
                 eyes = v_data.get('eyes', 'brown'); eyes += " eyes" if "eyes" not in eyes else ""
                 hair_len, hair_vol, hair_tex, hair_color = v_data.get('hair_length', ''), v_data.get('hair_volume', ''), v_data.get('hair_texture', ''), v_data.get('hair_color', '')
+                hair_style = v_data.get('hair_style', 'worn down')
                 
-                final_hair = "bald head" if 'bald' in hair_len or 'bald' in hair_tex or 'bald' in hair_color else f"{hair_len} {hair_vol} {hair_tex} {hair_color} hair"
+                # FIX: Incorporating complex hair styles and textures
+                final_hair = "bald head" if 'bald' in hair_len or 'bald' in hair_tex or 'bald' in hair_color else f"{hair_len} {hair_vol} {hair_tex} {hair_color} hair {hair_style}"
                 final_hair = " ".join(final_hair.split())
                 
                 beard = v_data.get('beard', 'no beard')
                 beard_str = f"with a {beard}" if "no" not in beard else "clean-shaven"
                 glasses = v_data.get('glasses', 'no glasses')
                 glasses_str = f"wearing {glasses}" if "no" not in glasses else ""
+                
+                # FIX: Injecting vitiligo, scars, freckles directly into the prompt core
+                distinctive = v_data.get('distinctive', 'none')
+                distinctive_str = f"with {distinctive}" if "none" not in distinctive else ""
 
                 traits = f"having {skin}, {eyes}, and {final_hair}, {beard_str}"
                 if glasses_str: traits += f", {glasses_str}"
+                if distinctive_str: traits += f", {distinctive_str}"
                 
                 exact_age, build_cat, exact_build, outfit = v_data.get("exact_age", "adult"), v_data.get("build_cat", "regular"), v_data.get("exact_build", "average build"), v_data.get("outfit", "")
             else:
