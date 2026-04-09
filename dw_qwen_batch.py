@@ -125,13 +125,15 @@ class DW_QwenBatchExtractor:
         batch_size = images.shape[0]
         results = []
 
-        # FIX: Hardcoded Internal Prompts for Split-Domain Extraction
-        PROMPT_BODY = 'Analyze this full-body image. Output STRICTLY JSON.\nKeys:\n"gender"("male"|"female"), "age_group"("baby"|"child"|"teenager"|"adult"|"elder"), "exact_age", "physical_build"("slim"|"regular"|"heavy"|"muscular"), "exact_build", "outfit_upper", "outfit_lower", "outfit_footwear"'
-        PROMPT_BIO = 'Analyze this face. Output STRICTLY JSON.\nKeys:\n"eyes", "beard_style_and_color"("no beard" or describe), "glasses"("no glasses" or describe)'
-        PROMPT_HAIR = 'Analyze ONLY the hair geometry. Look closely at the scalp. Output STRICTLY JSON.\nKeys:\n"hair_length"("short"|"shoulder-length"|"long"|"bald"), "hair_volume"("flat"|"thin"|"regular"|"thick"|"massive volume". If hair lies close to the head, it is "flat"), "hair_color", "hair_texture"("straight"|"wavy"|"curly"|"coily")'
+        # FIX: Hardcoded Internal Prompts with strict Negative Constraints to prevent VLM laziness        PROMPT_BODY = 'Analyze this full-body image. Output STRICTLY JSON. NEVER output "null", "none", or "not visible". If a detail is obscured, GUESS based on context.\nKeys:\n"gender"("male"|"female"), "age_group"("baby"|"child"|"teenager"|"adult"|"elder"), "exact_age"(e.g. "30 years old"), "physical_build"("slim"|"regular"|"heavy"|"muscular"), "exact_build", "outfit_upper", "outfit_lower", "outfit_footwear"'
         
-        PROMPT_BG_SEMANTIC = 'Analyze background. Output STRICTLY JSON.\nKeys:\n"location_type", "location_name", "architecture_style", "ground_material", "lighting_conditions", "atmosphere", "camera_properties"'
-        PROMPT_BG_SPATIAL = 'Analyze the spatial vanishing points. Output STRICTLY JSON with floats.\nKeys:\n"floor_y_percent" (float 0.5 to 1.0. Where does the walkable floor begin from the top?), "global_scale" (float 0.3 to 1.5. How large should people be?), "camera_elevation" (float -1.0 to 1.0. 0.0 is eye-level. >0 is looking down. <0 is looking up).'
+        PROMPT_BIO = 'Analyze this face. Output STRICTLY JSON. NEVER output "null".\nKeys:\n"eyes"(e.g. "brown eyes"), "beard_style_and_color"(MUST include the noun, e.g. "short black beard". If none, output "clean-shaven"), "glasses"("no glasses" or describe)'
+        
+        PROMPT_HAIR = 'Analyze ONLY the hair geometry. Look closely at the scalp. Output STRICTLY JSON. NEVER output "null".\nKeys:\n"hair_length"("short"|"shoulder-length"|"long"|"bald"), "hair_volume"("flat"|"thin"|"regular"|"thick"|"massive volume". If hair lies close to the scalp, it is "flat"), "hair_color", "hair_texture"("straight"|"wavy"|"curly"|"coily")'
+        
+        PROMPT_BG_SEMANTIC = 'Analyze background. Identify famous architectural landmarks explicitly. Output STRICTLY JSON.\nKeys:\n"location_type"("famous_landmark"|"generic_location"), "location_name", "architecture_style", "ground_material", "lighting_conditions", "atmosphere", "camera_properties"'
+        
+        PROMPT_BG_SPATIAL = 'Analyze spatial geometry. Output STRICTLY JSON with floats.\nKeys:\n"floor_y_percent" (float 0.6 to 1.0. 1.0 is bottom of screen), "global_scale" (float 0.5 to 1.2), "camera_elevation" (float: -0.5 for low angle looking up, 0.0 for eye-level, 0.5 for high angle looking down).'
 
         for i in range(batch_size):
             img_np = (np.clip(images[i].cpu().numpy(), 0, 1) * 255).astype(np.uint8)

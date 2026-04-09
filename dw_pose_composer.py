@@ -480,6 +480,20 @@ class DW_DynamicPoseComposer:
             parent_kps = adult_anchors.get(char.parent_id, None)
             char.keypoints = BiometricFactory.build_skeleton(char, 0, 0, metrics, rng_context, parent_kps=parent_kps)
 
+        # FIX: Dynamic Y-Axis Bounding Box Auto-Shifter
+        # Prevents headless skeletons if Qwen hallucinates extreme floor_y or global_scale
+        min_y = float('inf')
+        for char in characters:
+            for k, pt in char.keypoints.items():
+                if pt[1] < min_y: min_y = pt[1]
+                
+        safe_margin = 80
+        if min_y < safe_margin:
+            shift_y = safe_margin - min_y
+            for char in characters:
+                for k, pt in char.keypoints.items():
+                    char.keypoints[k] = (pt[0], pt[1] + int(shift_y))
+
         renderer = OpenPoseRenderer(scene)
         pose_canvas_np, masks_tensor, bg_mask_tensor = renderer.draw_pose_and_masks(characters)
         pose_canvas_tensor = torch.from_numpy(pose_canvas_np).float() / 255.0
@@ -507,6 +521,9 @@ class DW_DynamicPoseComposer:
 
         telemetry_lines = [
             "# 📊  TELEMETRY REPORT", f"**Seed:** `{rng_seed}`", "---",
+            "### 🧠 VLM RAW PAYLOADS",
+            f"**BG Qwen:** `{global_positive}`",
+            f"**Chars Qwen:** `{vision_context}`", "---",
             f"### 🌍 GLOBAL PROMPTS",
             f"**Spatial Engine:** `Scale: {global_scale} | Floor Y: {floor_y_percent} | Cam Elev: {camera_elevation}`",
             f"**Positive:** `{parsed_global_positive}`",
