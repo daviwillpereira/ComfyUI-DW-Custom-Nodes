@@ -194,12 +194,20 @@ class BiometricFactory:
                 kps[6] = (kps[5][0] + int(arm_swing_relax), kps[5][1] + int(arm_l*0.5))
                 kps[7] = (kps[6][0] + int(arm_l*0.05), kps[6][1] + int(arm_l*0.5))
         else:
-            arm_swing_r = rng_context.uniform(0.05, 0.08) * arm_l
-            kps[3] = (kps[2][0] - int(arm_swing_r), kps[2][1] + int(arm_l*0.5))
-            kps[4] = (kps[3][0] - int(arm_l*0.05), kps[3][1] + int(arm_l*0.5))
-            arm_swing_l = rng_context.uniform(0.05, 0.08) * arm_l
-            kps[6] = (kps[5][0] + int(arm_swing_l), kps[5][1] + int(arm_l*0.5))
-            kps[7] = (kps[6][0] + int(arm_l*0.05), kps[6][1] + int(arm_l*0.5))
+            # FIX: Contrapposto Asymmetry (Arms)
+            is_weight_on_right = getattr(char, "_weight_on_right", rng_context.choice([True, False]))
+            char._weight_on_right = is_weight_on_right # Guarda a decisão para as pernas
+            
+            if is_weight_on_right:
+                kps[3] = (kps[2][0] - int(arm_l*0.1), kps[2][1] + int(arm_l*0.4))
+                kps[4] = (kps[8][0] - int(hw*0.4), kps[8][1] + int(arm_l*0.1)) 
+                kps[6] = (kps[5][0] + int(arm_l*0.1), kps[5][1] + int(arm_l*0.5))
+                kps[7] = (kps[6][0], kps[6][1] + int(arm_l*0.4))
+            else:
+                kps[3] = (kps[2][0] - int(arm_l*0.1), kps[2][1] + int(arm_l*0.5))
+                kps[4] = (kps[3][0], kps[3][1] + int(arm_l*0.4))
+                kps[6] = (kps[5][0] + int(arm_l*0.1), kps[5][1] + int(arm_l*0.4))
+                kps[7] = (kps[11][0] + int(hw*0.4), kps[11][1] + int(arm_l*0.1))
         
         if char.parent_id:
             is_left_hip = getattr(char, "_is_left_hip", True)
@@ -222,14 +230,18 @@ class BiometricFactory:
             kps[12] = (kps[11][0] + knee_spread, anchor_y)
             kps[13] = (kps[12][0] - int(hw*0.5), kps[12][1] - int(leg_l*0.3))
         else:
-            leg_bend_r = rng_context.uniform(0.40, 0.45) * leg_l
-            knee_offset_r = int(hw * 0.1) 
-            kps[9] = (kps[8][0] + knee_offset_r, kps[8][1] + int(leg_bend_r))
-            kps[10] = (kps[8][0], kps[9][1] + int(leg_l - leg_bend_r)) 
-            leg_bend_l = rng_context.uniform(0.48, 0.52) * leg_l
-            knee_offset_l = int(hw * 0.05) 
-            kps[12] = (kps[11][0] - knee_offset_l, kps[11][1] + int(leg_bend_l))
-            kps[13] = (kps[11][0], kps[12][1] + int(leg_l - leg_bend_l)) 
+            # FIX: Contrapposto Asymmetry (Legs)
+            is_weight_on_right = getattr(char, "_weight_on_right", True)
+            if is_weight_on_right:
+                kps[9] = (kps[8][0], kps[8][1] + int(leg_l * 0.5))
+                kps[10] = (kps[8][0], anchor_y)
+                kps[12] = (kps[11][0] + int(hw * 0.3), kps[11][1] + int(leg_l * 0.45))
+                kps[13] = (kps[11][0] + int(hw * 0.2), anchor_y - int(leg_l * 0.05))
+            else:
+                kps[12] = (kps[11][0], kps[11][1] + int(leg_l * 0.5))
+                kps[13] = (kps[11][0], anchor_y)
+                kps[9] = (kps[8][0] - int(hw * 0.3), kps[8][1] + int(leg_l * 0.45))
+                kps[10] = (kps[8][0] - int(hw * 0.2), anchor_y - int(leg_l * 0.05))
         
         return kps
 
@@ -372,20 +384,22 @@ class DW_DynamicPoseComposer:
                     global_lighting = f"{extracted_light} lighting"
                 cam_angle = str(bg_dict.get("camera_angle", "eye_level")).lower()
                 if "high" in cam_angle:
-                    floor_y_percent, global_scale, camera_elevation = 0.90, 0.60, 0.40
+                    floor_y_percent, global_scale, camera_elevation = 0.75, 0.60, 0.40
                     perspective_shot_global = "high angle shot, looking down"
                 elif "low" in cam_angle:
-                    floor_y_percent, global_scale, camera_elevation = 0.80, 0.80, -0.40
+                    # FIX: Push feet down to 0.95 to bypass depth-map pedestals
+                    floor_y_percent, global_scale, camera_elevation = 0.95, 0.85, -0.40
                     perspective_shot_global = "low angle shot, looking up"
                 else: # Fallback to eye_level
                     floor_y_percent, global_scale, camera_elevation = 0.85, 0.70, 0.0
                     perspective_shot_global = "eye-level shot"
                 
-                # 2. Semantic Cleanup
+                # 2. Semantic Cleanup & Anti-Zombie Injection
                 parts = []
                 for key in ["location_name", "architecture_style", "ground_material", "lighting_conditions", "atmosphere"]:
                     if bg_dict.get(key): parts.append(bg_dict[key])
                 parsed_global_positive = ", ".join([str(p).strip() for p in parts if str(p).strip()])
+                parsed_global_positive += ", empty background, no crowds, uninhabited, nobody"
         except Exception:
             pass # Use defaults if parsing fails
         
