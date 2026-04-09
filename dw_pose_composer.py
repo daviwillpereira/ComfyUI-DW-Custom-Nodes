@@ -351,24 +351,40 @@ class DW_DynamicPoseComposer:
     def generate_rigs(self, width: int, height: int, vision_context: str, clip, global_positive: str, global_negative: str):
         import json
         
-        # FIX: Dynamic Spatial Parsing from Background Qwen JSON
-        floor_y_percent, global_scale, camera_elevation = 0.85, 0.70, 0.0
+        # SOTA FIX: State Machine for Camera Perspective
+        # Default Fallback (Neutral)
+        floor_y_percent = 0.85
+        global_scale = 0.70
+        camera_elevation = 0.0
+        perspective_shot_global = "eye-level shot"
+        
         parsed_global_positive = global_positive
         
         try:
             bg_data = json.loads(global_positive)
             if isinstance(bg_data, list) and len(bg_data) > 0 and isinstance(bg_data[0], dict):
                 bg_dict = bg_data[0]
-                floor_y_percent = float(bg_dict.get("floor_y_percent", 0.85))
-                global_scale = float(bg_dict.get("global_scale", 0.70))
-                camera_elevation = float(bg_dict.get("camera_elevation", 0.0))
                 
+                # 1. State Routing
+                cam_angle = str(bg_dict.get("camera_angle", "eye_level")).lower()
+                
+                if "high" in cam_angle:
+                    floor_y_percent, global_scale, camera_elevation = 0.90, 0.60, 0.40
+                    perspective_shot_global = "high angle shot, looking down"
+                elif "low" in cam_angle:
+                    floor_y_percent, global_scale, camera_elevation = 0.80, 0.80, -0.40
+                    perspective_shot_global = "low angle shot, looking up"
+                else: # Fallback to eye_level
+                    floor_y_percent, global_scale, camera_elevation = 0.85, 0.70, 0.0
+                    perspective_shot_global = "eye-level shot"
+                
+                # 2. Semantic Cleanup
                 parts = []
-                for key in ["location_name", "architecture_style", "ground_material", "lighting_conditions", "atmosphere", "camera_properties"]:
+                for key in ["location_name", "architecture_style", "ground_material", "lighting_conditions", "atmosphere"]:
                     if bg_dict.get(key): parts.append(bg_dict[key])
                 parsed_global_positive = ", ".join([str(p).strip() for p in parts if str(p).strip()])
         except Exception:
-            pass # Fallback to raw string if parsing fails
+            pass # Use defaults if parsing fails
         
         try:
             vision_data_list = json.loads(vision_context)
@@ -586,11 +602,9 @@ class DW_DynamicPoseComposer:
                 traits, exact_age, build_cat, exact_build, outfit = "having natural skin, brown eyes, detailed face", "adult", "regular", "regular build", "stylish casual clothes"
 
             clean_outfit = outfit.replace("wearing ", "").strip()
-            perspective_shot = "eye-level shot"
-            if camera_elevation > 0.3: perspective_shot = "high angle shot, looking down"
-            elif camera_elevation < -0.3: perspective_shot = "low angle shot, looking up"
             
-            regional_text = f"A photorealistic {exact_age} {build_cat} {exact_build} {noun}, {traits}, perfectly shaped symmetric ears, wearing {clean_outfit}, {action_context}, {perspective_shot}, cinematic lighting"
+            # FIX: Consume the State Machine perspective
+            regional_text = f"A photorealistic {exact_age} {build_cat} {exact_build} {noun}, {traits}, perfectly shaped symmetric ears, wearing {clean_outfit}, {action_context}, {perspective_shot_global}, cinematic lighting"
             regional_text = " ".join(regional_text.split())
             telemetry_lines.append(f"- **{char.char_id}**: `{regional_text}`")
             

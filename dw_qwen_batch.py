@@ -127,15 +127,12 @@ class DW_QwenBatchExtractor:
 
         # FIX: Hardcoded Internal Prompts with strict Negative Constraints to prevent VLM laziness         
         PROMPT_BODY = 'Analyze this full-body image. Output STRICTLY JSON. NEVER output "null", "none", or "not visible". If a detail is obscured, GUESS based on context.\nKeys:\n"gender"("male"|"female"), "age_group"("baby"|"child"|"teenager"|"adult"|"elder"), "exact_age"(e.g. "30 years old"), "physical_build"("slim"|"regular"|"heavy"|"muscular"), "exact_build", "outfit_upper", "outfit_lower", "outfit_footwear"'
-        
         PROMPT_BIO = 'Analyze this face. Output STRICTLY JSON. NEVER output "null".\nKeys:\n"eyes"(e.g. "brown eyes"), "beard_style_and_color"(MUST include the noun, e.g. "short black beard". If none, output "clean-shaven"), "glasses"("no glasses" or describe)'
-        
         PROMPT_HAIR = 'Analyze ONLY the hair geometry. Look closely at the scalp. Output STRICTLY JSON. NEVER output "null".\nKeys:\n"hair_length"("short"|"shoulder-length"|"long"|"bald"), "hair_volume"("flat"|"thin"|"regular"|"thick"|"massive volume". If hair lies close to the scalp, it is "flat"), "hair_color", "hair_texture"("straight"|"wavy"|"curly"|"coily")'
         
         # FIX: Enforce visual strictness to block historical/training data hallucination
-        PROMPT_BG_SEMANTIC = 'Analyze background STRICTLY based on VISUAL EVIDENCE in the image. Ignore external knowledge. If it is daytime, say day. Output STRICTLY JSON.\nKeys:\n"location_type"("famous_landmark"|"generic_location"), "location_name", "architecture_style", "ground_material"(look at the actual floor pixels, e.g. "concrete", "grass"), "lighting_conditions"(e.g. "bright daylight", "overcast"), "atmosphere", "camera_properties"'
-        
-        PROMPT_BG_SPATIAL = 'Analyze spatial geometry. Output STRICTLY JSON with floats.\nKeys:\n"floor_y_percent" (float 0.6 to 1.0. Look at where feet touch the ground. 1.0 is absolute bottom), "global_scale" (float 0.3 to 1.0. Estimate human scale relative to background), "camera_elevation" (float: -0.5 for low angle looking up, 0.0 for eye-level, 0.5 for high angle looking down).'
+        PROMPT_BG_SEMANTIC = 'Analyze background STRICTLY based on VISUAL EVIDENCE. Ignore external knowledge. If it is daytime, say day. Output STRICTLY JSON.\nKeys:\n"location_type"("famous_landmark"|"generic_location"), "location_name", "architecture_style", "ground_material"(look at the actual floor pixels, e.g. "concrete", "grass"), "lighting_conditions"(e.g. "bright daylight", "overcast"), "atmosphere"'
+        PROMPT_BG_SPATIAL = 'Classify the camera angle of this background image. Output STRICTLY JSON.\nKeys:\n"camera_angle" (MUST be EXACTLY ONE of these three: "high_angle" if looking down at the ground, "eye_level" if looking straight ahead, "low_angle" if looking up at a tall structure).'
         
         for i in range(batch_size):
             img_np = (np.clip(images[i].cpu().numpy(), 0, 1) * 255).astype(np.uint8)
