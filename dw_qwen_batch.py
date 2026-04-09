@@ -132,10 +132,11 @@ class DW_QwenBatchExtractor:
         
         PROMPT_HAIR = 'Analyze ONLY the hair geometry. Look closely at the scalp. Output STRICTLY JSON. NEVER output "null".\nKeys:\n"hair_length"("short"|"shoulder-length"|"long"|"bald"), "hair_volume"("flat"|"thin"|"regular"|"thick"|"massive volume". If hair lies close to the scalp, it is "flat"), "hair_color", "hair_texture"("straight"|"wavy"|"curly"|"coily")'
         
-        PROMPT_BG_SEMANTIC = 'Analyze background. Identify famous architectural landmarks explicitly. Output STRICTLY JSON.\nKeys:\n"location_type"("famous_landmark"|"generic_location"), "location_name", "architecture_style", "ground_material", "lighting_conditions", "atmosphere", "camera_properties"'
+        # FIX: Enforce visual strictness to block historical/training data hallucination
+        PROMPT_BG_SEMANTIC = 'Analyze background STRICTLY based on VISUAL EVIDENCE in the image. Ignore external knowledge. If it is daytime, say day. Output STRICTLY JSON.\nKeys:\n"location_type"("famous_landmark"|"generic_location"), "location_name", "architecture_style", "ground_material"(look at the actual floor pixels, e.g. "concrete", "grass"), "lighting_conditions"(e.g. "bright daylight", "overcast"), "atmosphere", "camera_properties"'
         
-        PROMPT_BG_SPATIAL = 'Analyze spatial geometry. Output STRICTLY JSON with floats.\nKeys:\n"floor_y_percent" (float 0.6 to 1.0. 1.0 is bottom of screen), "global_scale" (float 0.5 to 1.2), "camera_elevation" (float: -0.5 for low angle looking up, 0.0 for eye-level, 0.5 for high angle looking down).'
-
+        PROMPT_BG_SPATIAL = 'Analyze spatial geometry. Output STRICTLY JSON with floats.\nKeys:\n"floor_y_percent" (float 0.6 to 1.0. Look at where feet touch the ground. 1.0 is absolute bottom), "global_scale" (float 0.3 to 1.0. Estimate human scale relative to background), "camera_elevation" (float: -0.5 for low angle looking up, 0.0 for eye-level, 0.5 for high angle looking down).'
+        
         for i in range(batch_size):
             img_np = (np.clip(images[i].cpu().numpy(), 0, 1) * 255).astype(np.uint8)
             pil_base = Image.fromarray(img_np).convert("RGB")

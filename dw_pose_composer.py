@@ -397,13 +397,18 @@ class DW_DynamicPoseComposer:
         for i in range(num_characters):
             raw = vision_data_list[i]
             
-            outfit_upper = raw.get("outfit_upper", "")
-            outfit_lower = raw.get("outfit_lower", "")
-            outfit_footwear = raw.get("outfit_footwear", "")
+            # FIX: Semantic Outfit Sanitizer to intercept VLM failures
+            def get_valid_outfit(val, default_val):
+                s = str(val or "").lower()
+                if not s or s == "null" or "not visible" in s or "unknown" in s or "none" in s:
+                    return default_val
+                return str(val)
+                
+            outfit_upper = get_valid_outfit(raw.get("outfit_upper"), "neutral shirt")
+            outfit_lower = get_valid_outfit(raw.get("outfit_lower"), "jeans")
+            outfit_footwear = get_valid_outfit(raw.get("outfit_footwear"), "sneakers")
             
-            combined_outfit = ", ".join(filter(None, [outfit_upper, outfit_lower, outfit_footwear])).strip()
-            if not combined_outfit:
-                combined_outfit = raw.get("outfit", "modern stylish casual clothes")
+            combined_outfit = f"{outfit_upper}, {outfit_lower}, {outfit_footwear}"
             
             mapped = {
                 "gender": str(raw.get("gender") or "male").lower(),
