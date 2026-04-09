@@ -263,18 +263,39 @@ class OpenPoseRenderer:
                     char.keypoints[8], 
                 ], np.int32)
                 cv2.fillPoly(char_mask, [torso_pts], 255)
+                
+            # FIX: Pelvic block to prevent Depth Piercing (Thigh Gap closure)
+            if all(k in char.keypoints for k in [8, 11]):
+                groin_x = (char.keypoints[8][0] + char.keypoints[11][0]) // 2
+                groin_y = max(char.keypoints[8][1], char.keypoints[11][1]) + int(base_thickness * 1.8)
+                pelvis_pts = np.array([
+                    char.keypoints[8],
+                    char.keypoints[11],
+                    (groin_x, groin_y)
+                ], np.int32)
+                cv2.fillPoly(char_mask, [pelvis_pts], 255)
             
             for pair in POSE_PAIRS:
                 if pair[0] in char.keypoints and pair[1] in char.keypoints:
                     pt1 = char.keypoints[pair[0]]
                     pt2 = char.keypoints[pair[1]]
-                    cv2.line(char_mask, pt1, pt2, 255, thickness=base_thickness)
+                    
+                    # FIX: Dynamic anatomical thickness
+                    current_thickness = base_thickness
+                    if pair in [(8, 9), (11, 12)]: # Thighs
+                        current_thickness = int(base_thickness * 1.5)
+                    elif pair in [(9, 10), (12, 13)]: # Calves
+                        current_thickness = int(base_thickness * 1.2)
+                    elif pair in [(2, 3), (5, 6), (3, 4), (6, 7)]: # Arms
+                        current_thickness = int(base_thickness * 0.8)
+                        
+                    cv2.line(char_mask, pt1, pt2, 255, thickness=current_thickness, lineType=cv2.LINE_AA)
             
             if 0 in char.keypoints:
                 head_radius = 85 if char.gender == "female" else 75
                 if char.age_group in ["child", "baby"]:
                     head_radius = int(head_radius * 0.7)
-                cv2.circle(char_mask, char.keypoints[0], head_radius, 255, thickness=-1)
+                cv2.circle(char_mask, char.keypoints[0], head_radius, 255, thickness=-1, lineType=cv2.LINE_AA)
 
             blurred_char_mask = cv2.GaussianBlur(char_mask, self.blur_kernel, 0)
             char_mask_exclusive = cv2.bitwise_and(blurred_char_mask, cv2.bitwise_not(global_z_buffer))

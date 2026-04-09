@@ -125,7 +125,8 @@ class DW_QwenBatchExtractor:
         batch_size = images.shape[0]
         results = []
 
-        # FIX: Hardcoded Internal Prompts with strict Negative Constraints to prevent VLM laziness        PROMPT_BODY = 'Analyze this full-body image. Output STRICTLY JSON. NEVER output "null", "none", or "not visible". If a detail is obscured, GUESS based on context.\nKeys:\n"gender"("male"|"female"), "age_group"("baby"|"child"|"teenager"|"adult"|"elder"), "exact_age"(e.g. "30 years old"), "physical_build"("slim"|"regular"|"heavy"|"muscular"), "exact_build", "outfit_upper", "outfit_lower", "outfit_footwear"'
+        # FIX: Hardcoded Internal Prompts with strict Negative Constraints to prevent VLM laziness         
+        PROMPT_BODY = 'Analyze this full-body image. Output STRICTLY JSON. NEVER output "null", "none", or "not visible". If a detail is obscured, GUESS based on context.\nKeys:\n"gender"("male"|"female"), "age_group"("baby"|"child"|"teenager"|"adult"|"elder"), "exact_age"(e.g. "30 years old"), "physical_build"("slim"|"regular"|"heavy"|"muscular"), "exact_build", "outfit_upper", "outfit_lower", "outfit_footwear"'
         
         PROMPT_BIO = 'Analyze this face. Output STRICTLY JSON. NEVER output "null".\nKeys:\n"eyes"(e.g. "brown eyes"), "beard_style_and_color"(MUST include the noun, e.g. "short black beard". If none, output "clean-shaven"), "glasses"("no glasses" or describe)'
         
