@@ -315,12 +315,9 @@ class DW_DynamicPoseComposer:
             "required": {
                 "width": ("INT", {"default": 1024, "min": 512, "max": 4096, "step": 8}),
                 "height": ("INT", {"default": 1024, "min": 512, "max": 4096, "step": 8}),
-                "floor_y_percent": ("FLOAT", {"default": 0.85, "min": 0.5, "max": 1.0, "step": 0.01}),
-                "global_scale": ("FLOAT", {"default": 0.70, "min": 0.3, "max": 2.0, "step": 0.01}),
-                "camera_elevation": ("FLOAT", {"default": 0.0, "min": -1.0, "max": 1.0, "step": 0.05}),
                 "vision_context": ("STRING", {"forceInput": True, "multiline": True}),
                 "clip": ("CLIP",),
-                "global_positive": ("STRING", {"multiline": True, "default": "RAW photo, 8k uhd, dslr"}),
+                "global_positive": ("STRING", {"multiline": True, "forceInput": True}), # SOTA FIX: Now receives the raw BG JSON
                 "global_negative": ("STRING", {"multiline": True, "default": "deformed, bad anatomy"}),
             }
         }
@@ -330,38 +327,36 @@ class DW_DynamicPoseComposer:
     FUNCTION = "generate_rigs"
     CATEGORY = "DW_Nodes/Pose"
 
-    def generate_rigs(self, width: int, height: int, floor_y_percent: float, global_scale: float, camera_elevation: float, vision_context: str, clip, global_positive: str, global_negative: str):
-        
+    def generate_rigs(self, width: int, height: int, vision_context: str, clip, global_positive: str, global_negative: str):
         import json
         
-        try:
-            vision_data_list = json.loads(vision_context)
-            if not isinstance(vision_data_list, list):
-                vision_data_list = [vision_data_list]
-        except Exception as e:
-            raise ValueError(f"[DW_ERROR] vision_context is not a valid JSON array. Error: {e}")
-            
-        num_characters = len(vision_data_list)
-        if num_characters == 0:
-            raise ValueError("[DW] Critical Error: vision_context is empty.")
-
+        # FIX: Dynamic Spatial Parsing from Background Qwen JSON
+        floor_y_percent, global_scale, camera_elevation = 0.85, 0.70, 0.0
+        parsed_global_positive = global_positive
+        
         try:
             bg_data = json.loads(global_positive)
             if isinstance(bg_data, list) and len(bg_data) > 0 and isinstance(bg_data[0], dict):
                 bg_dict = bg_data[0]
-                parts = []
-                if bg_dict.get("location_name"): parts.append(bg_dict["location_name"])
-                if bg_dict.get("architecture_style"): parts.append(bg_dict["architecture_style"])
-                if bg_dict.get("ground_material"): parts.append(bg_dict["ground_material"])
-                if bg_dict.get("lighting_conditions"): parts.append(bg_dict["lighting_conditions"])
-                if bg_dict.get("atmosphere"): parts.append(bg_dict["atmosphere"])
-                if bg_dict.get("camera_properties"): parts.append(bg_dict["camera_properties"])
+                floor_y_percent = float(bg_dict.get("floor_y_percent", 0.85))
+                global_scale = float(bg_dict.get("global_scale", 0.70))
+                camera_elevation = float(bg_dict.get("camera_elevation", 0.0))
                 
+                parts = []
+                for key in ["location_name", "architecture_style", "ground_material", "lighting_conditions", "atmosphere", "camera_properties"]:
+                    if bg_dict.get(key): parts.append(bg_dict[key])
                 parsed_global_positive = ", ".join([str(p).strip() for p in parts if str(p).strip()])
-            else:
-                parsed_global_positive = global_positive
         except Exception:
-            parsed_global_positive = global_positive
+            pass # Fallback to raw string if parsing fails
+        
+        try:
+            vision_data_list = json.loads(vision_context)
+            if not isinstance(vision_data_list, list): vision_data_list = [vision_data_list]
+        except Exception as e:
+            raise ValueError(f"[DW_ERROR] vision_context is not a valid JSON array. Error: {e}")
+            
+        num_characters = len(vision_data_list)
+        if num_characters == 0: raise ValueError("[DW] Critical Error: vision_context is empty.")
 
         rng_seed = random.randint(0, 9999999)
         rng_context = random.Random(rng_seed)
@@ -410,49 +405,28 @@ class DW_DynamicPoseComposer:
             if mapped["build_cat"] not in ["slim", "regular", "heavy", "muscular"]: mapped["build_cat"] = "regular"
             parsed_chars_data.append(mapped)
 
-        available_adults = []
-        for i, v_data in enumerate(parsed_chars_data):
-            if v_data["age_group"] in ["adult", "elder"]:
-                available_adults.append(f"person_{i}")
-                
+        available_adults = [f"person_{i}" for i, v in enumerate(parsed_chars_data) if v["age_group"] in ["adult", "elder"]]
         used_adults = set()
         
         for i, v_data in enumerate(parsed_chars_data):
-            char = CharacterDTO(
-                char_id=f"person_{i}", 
-                gender=v_data["gender"],
-                age_group=v_data["age_group"], 
-                build=v_data["build_cat"]
-            )
+            char = CharacterDTO(char_id=f"person_{i}", gender=v_data["gender"], age_group=v_data["age_group"], build=v_data["build_cat"])
             
-            # FIX: Atomic assembly of hair for the PHENOTYPES string
             hair_len_vol = f"{v_data.get('hair_length', '')} {v_data.get('hair_volume', '')}".strip()
             hair_color_tex = f"{v_data.get('hair_texture', '')} {v_data.get('hair_color', '')}".strip()
-            
-            if 'bald' in hair_color_tex or 'bald' in hair_len_vol:
-                final_hair = "bald"
-            else:
-                final_hair = f"{hair_len_vol} {hair_color_tex} hair".strip()
+            final_hair = "bald" if 'bald' in hair_color_tex or 'bald' in hair_len_vol else f"{hair_len_vol} {hair_color_tex} hair".strip()
             
             glasses = ", wearing glasses" if "no" not in v_data.get("glasses", "no") else ""
             beard = f", {v_data.get('beard', '')}" if "no" not in v_data.get('beard', 'no') else ""
-            
-            # FIX: Replaced legacy 'hair' key with 'final_hair'
             traits = f"{v_data.get('skin', 'natural skin')}, {final_hair}, {v_data.get('eyes', 'eyes')}{beard}{glasses}"
                 
-            # FIX: Inject build_cat explicitly
             phenotype_line = f"{v_data.get('exact_age', '')} {v_data.get('build_cat', '')} {v_data.get('exact_build', '')} {char.gender}, {traits}"
             phenotypes_list.append(" ".join(phenotype_line.split()))
             
             if char.age_group == "baby":
                 free_adults = [a for a in available_adults if a not in used_adults]
                 if free_adults:
-                    char.z_index = 2
-                    char.parent_id = free_adults[0]
-                    used_adults.add(free_adults[0])
-                else:
-                    char.parent_id = None
-                    char.z_index = 1
+                    char.z_index = 2; char.parent_id = free_adults[0]; used_adults.add(free_adults[0])
+                else: char.parent_id = None; char.z_index = 1
                 
             characters.append(char)
             
@@ -462,24 +436,19 @@ class DW_DynamicPoseComposer:
             if char.parent_id:
                 parent_char = next((c for c in characters if c.char_id == char.parent_id), None)
                 if parent_char:
-                    parent_char.is_holding_baby = True
-                    parent_char._holding_baby_on_left = rng_context.choice([True, False])
+                    parent_char.is_holding_baby = True; parent_char._holding_baby_on_left = rng_context.choice([True, False])
                     char._is_left_hip = parent_char._holding_baby_on_left
 
         scene.original_characters = list(characters)
-
         processing_order = sorted(characters, key=lambda c: c.parent_id is not None)
         base_h = int(height * 0.7 * scene.global_scale)
         floor_y = int(height * scene.floor_y_percent)
         
         for char in characters:
             metrics = BiometricFactory.get_metrics(char, base_h, camera_elevation)
-            if char.parent_id:
-                char.z_index = 99999 
-            elif char.is_holding_baby:
-                char.z_index = 50000 
-            else:
-                char.z_index = int(10000 / metrics["total_h"])
+            if char.parent_id: char.z_index = 99999 
+            elif char.is_holding_baby: char.z_index = 50000 
+            else: char.z_index = int(10000 / metrics["total_h"])
 
         independent_chars = [c for c in processing_order if not c.parent_id]
         dependent_chars = [c for c in processing_order if c.parent_id]
@@ -497,16 +466,13 @@ class DW_DynamicPoseComposer:
             
         start_x = (width - cluster_total_width) // 2 if cluster_total_width < width else 50
         x_current = start_x
-        
         adult_anchors = {} 
         
         for i, (char, metrics, padded_width) in enumerate(char_metrics):
             char_center_x = x_current + (padded_width // 2)
             y_jitter = int(metrics["head_h"] * 0.08) if i % 2 == 0 else 0
-            
             char.keypoints = BiometricFactory.build_skeleton(char, char_center_x, floor_y + y_jitter, metrics, rng_context)
             adult_anchors[char.char_id] = char.keypoints 
-            
             x_current += padded_width
 
         for char in dependent_chars:
@@ -516,7 +482,6 @@ class DW_DynamicPoseComposer:
 
         renderer = OpenPoseRenderer(scene)
         pose_canvas_np, masks_tensor, bg_mask_tensor = renderer.draw_pose_and_masks(characters)
-        
         pose_canvas_tensor = torch.from_numpy(pose_canvas_np).float() / 255.0
         pose_canvas_tensor = pose_canvas_tensor.unsqueeze(0)
 
@@ -524,16 +489,9 @@ class DW_DynamicPoseComposer:
         for char in characters:
             pose_2d = []
             for i in range(18):
-                if i in char.keypoints:
-                    pose_2d.extend([float(char.keypoints[i][0]), float(char.keypoints[i][1]), 1.0])
-                else:
-                    pose_2d.extend([0.0, 0.0, 0.0])
-            people.append({
-                "pose_keypoints_2d": pose_2d,
-                "face_keypoints_2d": None,
-                "hand_left_keypoints_2d": None,
-                "hand_right_keypoints_2d": None
-            })
+                if i in char.keypoints: pose_2d.extend([float(char.keypoints[i][0]), float(char.keypoints[i][1]), 1.0])
+                else: pose_2d.extend([0.0, 0.0, 0.0])
+            people.append({"pose_keypoints_2d": pose_2d, "face_keypoints_2d": None, "hand_left_keypoints_2d": None, "hand_right_keypoints_2d": None})
             
         pose_keypoint_str = json.dumps([{"people": people, "canvas_height": height, "canvas_width": width}])
 
@@ -548,74 +506,48 @@ class DW_DynamicPoseComposer:
         final_pos_cond, = cond_set_mask.append(global_pos_cond_raw, bg_mask_tensor_unsqueeze, "default", 1.0)
 
         telemetry_lines = [
-            "# 📊  TELEMETRY REPORT",
-            f"**Seed:** `{rng_seed}`",
-            "---",
+            "# 📊  TELEMETRY REPORT", f"**Seed:** `{rng_seed}`", "---",
             f"### 🌍 GLOBAL PROMPTS",
+            f"**Spatial Engine:** `Scale: {global_scale} | Floor Y: {floor_y_percent} | Cam Elev: {camera_elevation}`",
             f"**Positive:** `{parsed_global_positive}`",
-            f"**Negative:** `{global_negative}`",
-            "---",
-            "### 👤 REGIONAL PROMPTS (Multiplexed)"
+            f"**Negative:** `{global_negative}`", "---", "### 👤 REGIONAL PROMPTS (Multiplexed)"
         ]
 
         for i, char in enumerate(characters):
             noun = "person"
-            if char.gender == "male":
-                noun = "man" if char.age_group in ["adult", "elder"] else "boy"
-            else:
-                noun = "woman" if char.age_group in ["adult", "elder"] else "girl"
-            
-            if char.age_group == "baby":
-                noun = "baby"
+            if char.gender == "male": noun = "man" if char.age_group in ["adult", "elder"] else "boy"
+            else: noun = "woman" if char.age_group in ["adult", "elder"] else "girl"
+            if char.age_group == "baby": noun = "baby"
                 
             action_context = "being carried in arms" if char.parent_id else ("crawling on the floor" if char.age_group == "baby" else "standing, dynamic cinematic pose")
-            
             v_data = parsed_chars_data[i] if i < len(parsed_chars_data) else None
             
             if v_data:
-                # FIX: Natural Language Grammatical Assembly
-                skin = v_data.get('skin', 'natural')
-                if "skin" not in skin: skin += " skin"
+                skin = v_data.get('skin', 'natural'); skin += " skin" if "skin" not in skin else ""
+                eyes = v_data.get('eyes', 'brown'); eyes += " eyes" if "eyes" not in eyes else ""
+                hair_len, hair_vol, hair_tex, hair_color = v_data.get('hair_length', ''), v_data.get('hair_volume', ''), v_data.get('hair_texture', ''), v_data.get('hair_color', '')
                 
-                eyes = v_data.get('eyes', 'brown')
-                if "eyes" not in eyes: eyes += " eyes"
-
-                hair_len = v_data.get('hair_length', '')
-                hair_vol = v_data.get('hair_volume', '')
-                hair_tex = v_data.get('hair_texture', '')
-                hair_color = v_data.get('hair_color', '')
-                
-                if 'bald' in hair_len or 'bald' in hair_tex or 'bald' in hair_color:
-                    final_hair = "bald head"
-                else:
-                    final_hair = f"{hair_len} {hair_vol} {hair_tex} {hair_color} hair"
+                final_hair = "bald head" if 'bald' in hair_len or 'bald' in hair_tex or 'bald' in hair_color else f"{hair_len} {hair_vol} {hair_tex} {hair_color} hair"
                 final_hair = " ".join(final_hair.split())
                 
                 beard = v_data.get('beard', 'no beard')
                 beard_str = f"with a {beard}" if "no" not in beard else "clean-shaven"
-                
                 glasses = v_data.get('glasses', 'no glasses')
                 glasses_str = f"wearing {glasses}" if "no" not in glasses else ""
 
                 traits = f"having {skin}, {eyes}, and {final_hair}, {beard_str}"
                 if glasses_str: traits += f", {glasses_str}"
                 
-                exact_age = v_data.get("exact_age", "adult")
-                build_cat = v_data.get("build_cat", "regular")
-                exact_build = v_data.get("exact_build", "average build")
-                outfit = v_data.get("outfit", "")
+                exact_age, build_cat, exact_build, outfit = v_data.get("exact_age", "adult"), v_data.get("build_cat", "regular"), v_data.get("exact_build", "average build"), v_data.get("outfit", "")
             else:
                 traits, exact_age, build_cat, exact_build, outfit = "having natural skin, brown eyes, detailed face", "adult", "regular", "regular build", "stylish casual clothes"
 
             clean_outfit = outfit.replace("wearing ", "").strip()
-            
-            # FIX: Injecting Camera Perspective to solve ear flattening
             perspective_shot = "eye-level shot"
             if camera_elevation > 0.3: perspective_shot = "high angle shot, looking down"
             elif camera_elevation < -0.3: perspective_shot = "low angle shot, looking up"
             
             regional_text = f"A photorealistic {exact_age} {build_cat} {exact_build} {noun}, {traits}, perfectly shaped symmetric ears, wearing {clean_outfit}, {action_context}, {perspective_shot}, cinematic lighting"
-            
             regional_text = " ".join(regional_text.split())
             telemetry_lines.append(f"- **{char.char_id}**: `{regional_text}`")
             
@@ -626,18 +558,9 @@ class DW_DynamicPoseComposer:
 
         telemetry_lines.append("---")
         telemetry_lines.append("### 🦴 RAW POSE JSON")
-        telemetry_lines.append("```json")
-        telemetry_lines.append(pose_keypoint_str)
-        telemetry_lines.append("```")
+        telemetry_lines.append("```json\n" + pose_keypoint_str + "\n```")
         
-        telemetry_report_str = "\n".join(telemetry_lines)
-
-        return (pose_canvas_tensor, masks_tensor, telemetry_report_str, final_pos_cond, global_neg_cond, phenotypes_output)
+        return (pose_canvas_tensor, masks_tensor, "\n".join(telemetry_lines), final_pos_cond, global_neg_cond, phenotypes_output)
         
-# Registration
-NODE_CLASS_MAPPINGS = {
-    "DW_DynamicPoseComposer": DW_DynamicPoseComposer
-}
-NODE_DISPLAY_NAME_MAPPINGS = {
-    "DW_DynamicPoseComposer": "DW Dynamic Pose Composer"
-}
+NODE_CLASS_MAPPINGS = {"DW_DynamicPoseComposer": DW_DynamicPoseComposer}
+NODE_DISPLAY_NAME_MAPPINGS = {"DW_DynamicPoseComposer": "DW Dynamic Pose Composer"}

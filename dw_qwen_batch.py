@@ -11,8 +11,8 @@ from transformers import Qwen2_5_VLForConditionalGeneration, AutoProcessor, Bits
 class DW_QwenBatchExtractor:
     """
     Enterprise-grade LVLM batch processor with Split-Inference Fusion.
-    Integrates OpenCV K-Means clustering for deterministic Fitzpatrick skin tone 
-    extraction, bypassing LLM safety biases on racial taxonomy.
+    Encapsulates internal NLP prompts and executes micro-domain passes 
+    to prevent Attention Dilution. 
     """
     
     def __init__(self):
@@ -26,8 +26,7 @@ class DW_QwenBatchExtractor:
         return {
             "required": {
                 "images": ("IMAGE",),
-                "question_body": ("STRING", {"multiline": True, "default": ""}),
-                "question_face": ("STRING", {"multiline": True, "default": ""}),
+                "extraction_mode": (["characters", "background"],),
                 "model": (["Qwen2.5-VL-3B-Instruct", "Qwen2.5-VL-7B-Instruct"],),
                 "quantization": (["none", "4bit", "8bit"], {"default": "4bit"}),
                 "keep_model_loaded": ("BOOLEAN", {"default": False}),
@@ -72,11 +71,8 @@ class DW_QwenBatchExtractor:
         self.current_quant = quant
 
     def _extract_mathematical_skin_tone(self, pil_image: Image.Image) -> str:
-        """Determines dominant skin tone using K-Means and snaps to Fitzpatrick scale."""
         img_np = np.array(pil_image.convert('RGB'))
         h, w, _ = img_np.shape
-        
-        # Crop center 40% to isolate skin from hair and background
         cy, cx = h // 2, w // 2
         crop_h, crop_w = int(h * 0.4), int(w * 0.4)
         face_crop = img_np[cy - crop_h // 2 : cy + crop_h // 2, cx - crop_w // 2 : cx + crop_w // 2]
@@ -90,93 +86,86 @@ class DW_QwenBatchExtractor:
         dominant_rgb = palette[np.argmax(counts)]
         
         fitzpatrick = {
-            "pale/fair skin": np.array([248, 217, 206]),
-            "light skin": np.array([243, 195, 179]),
-            "medium skin": np.array([221, 162, 131]),
-            "olive skin": np.array([197, 139, 102]),
-            "medium-dark skin": np.array([138, 91, 68]),
-            "dark skin": np.array([91, 58, 41]),
+            "pale/fair skin": np.array([248, 217, 206]), "light skin": np.array([243, 195, 179]),
+            "medium skin": np.array([221, 162, 131]), "olive skin": np.array([197, 139, 102]),
+            "medium-dark skin": np.array([138, 91, 68]), "dark skin": np.array([91, 58, 41]),
             "very dark skin": np.array([46, 29, 22])
         }
         
-        closest_tone = "medium skin"
-        min_dist = float('inf')
+        closest_tone, min_dist = "medium skin", float('inf')
         for tone, ref_rgb in fitzpatrick.items():
             dist = np.linalg.norm(dominant_rgb - ref_rgb)
             if dist < min_dist:
-                min_dist = dist
-                closest_tone = tone
-                
+                min_dist = dist; closest_tone = tone
         return closest_tone
 
     def _extract_json_from_image(self, pil_image: Image.Image, question: str, temperature: float, max_new_tokens: int) -> dict:
         messages = [{"role": "user", "content": [{"type": "image"}, {"type": "text", "text": question}]}]
         prompt = self.processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
         inputs = self.processor(text=[prompt], images=[pil_image], padding=True, return_tensors="pt")
-        
-        device = next(self.model.parameters()).device
-        inputs = {k: v.to(device) for k, v in inputs.items()}
+        inputs = {k: v.to(next(self.model.parameters()).device) for k, v in inputs.items()}
 
         with torch.no_grad():
-            generated_ids = self.model.generate(
-                **inputs, max_new_tokens=max_new_tokens, temperature=temperature if temperature > 0.0 else 1.0, do_sample=(temperature > 0.0), repetition_penalty=1.05
-            )
+            generated_ids = self.model.generate(**inputs, max_new_tokens=max_new_tokens, temperature=temperature if temperature > 0.0 else 1.0, do_sample=(temperature > 0.0))
             
         generated_ids_trimmed = [out_ids[len(in_ids):] for in_ids, out_ids in zip(inputs["input_ids"], generated_ids)]
         output_text = self.processor.batch_decode(generated_ids_trimmed, skip_special_tokens=True, clean_up_tokenization_spaces=False)[0].strip()
         
-        clean_str = output_text
-        markdown_ticks = '`' * 3
-        regex_pattern = r'\s*' + markdown_ticks + r'(?:json)?$'
-        clean_str = re.sub(regex_pattern, '', clean_str, flags=re.IGNORECASE).strip()
-        
-        start_idx = clean_str.find('{')
-        end_idx = clean_str.rfind('}')
-        if start_idx != -1:
-            clean_str = clean_str[start_idx:end_idx+1] if (end_idx != -1 and end_idx > start_idx) else clean_str[start_idx:] + '}'
-        
+        clean_str = re.sub(r'\s*`{3}(?:json)?$', '', output_text, flags=re.IGNORECASE).strip()
+        start_idx, end_idx = clean_str.find('{'), clean_str.rfind('}')
+        if start_idx != -1: clean_str = clean_str[start_idx:end_idx+1] if (end_idx != -1 and end_idx > start_idx) else clean_str[start_idx:] + '}'
         clean_str = re.sub(r',\s*([\]}])', r'\1', clean_str)
-        try:
-            return json.loads(clean_str)
-        except json.JSONDecodeError:
-            return {"error": "parser_failure", "raw_content": output_text}
+        try: return json.loads(clean_str)
+        except json.JSONDecodeError: return {}
 
-    def process_batch(self, images: torch.Tensor, question_body: str, question_face: str, model: str, quantization: str, keep_model_loaded: bool, temperature: float, max_new_tokens: int, seed: int, detail_images_batch: torch.Tensor = None) -> tuple[str]:
+    def process_batch(self, images: torch.Tensor, extraction_mode: str, model: str, quantization: str, keep_model_loaded: bool, temperature: float, max_new_tokens: int, seed: int, detail_images_batch: torch.Tensor = None) -> tuple[str]:
         torch.manual_seed(seed)
         if torch.cuda.is_available(): torch.cuda.manual_seed_all(seed)
-        
         self.load_model(model, quantization)
         batch_size = images.shape[0]
         results = []
 
+        # SOTA FIX: Hardcoded Internal Prompts for Split-Domain Extraction
+        PROMPT_BODY = 'Analyze this full-body image. Output STRICTLY JSON.\nKeys:\n"gender"("male"|"female"), "age_group"("baby"|"child"|"teenager"|"adult"|"elder"), "exact_age", "physical_build"("slim"|"regular"|"heavy"|"muscular"), "exact_build", "outfit_upper", "outfit_lower", "outfit_footwear"'
+        PROMPT_BIO = 'Analyze this face. Output STRICTLY JSON.\nKeys:\n"eyes", "beard_style_and_color"("no beard" or describe), "glasses"("no glasses" or describe)'
+        PROMPT_HAIR = 'Analyze ONLY the hair geometry. Look closely at the scalp. Output STRICTLY JSON.\nKeys:\n"hair_length"("short"|"shoulder-length"|"long"|"bald"), "hair_volume"("flat"|"thin"|"regular"|"thick"|"massive volume". If hair lies close to the head, it is "flat"), "hair_color", "hair_texture"("straight"|"wavy"|"curly"|"coily")'
+        
+        PROMPT_BG_SEMANTIC = 'Analyze background. Output STRICTLY JSON.\nKeys:\n"location_type", "location_name", "architecture_style", "ground_material", "lighting_conditions", "atmosphere", "camera_properties"'
+        PROMPT_BG_SPATIAL = 'Analyze the spatial vanishing points. Output STRICTLY JSON with floats.\nKeys:\n"floor_y_percent" (float 0.5 to 1.0. Where does the walkable floor begin from the top?), "global_scale" (float 0.3 to 1.5. How large should people be?), "camera_elevation" (float -1.0 to 1.0. 0.0 is eye-level. >0 is looking down. <0 is looking up).'
+
         for i in range(batch_size):
-            img_tensor = images[i]
-            img_np = (np.clip(img_tensor.cpu().numpy(), 0, 1) * 255).astype(np.uint8)
-            pil_base_image = Image.fromarray(img_np).convert("RGB")
-            
-            body_data = self._extract_json_from_image(pil_base_image, question_body, temperature, max_new_tokens)
-            
-            face_data = {}
-            if detail_images_batch is not None and i < detail_images_batch.shape[0]:
-                detail_tensor = detail_images_batch[i]
-                detail_np = (np.clip(detail_tensor.cpu().numpy(), 0, 1) * 255).astype(np.uint8)
-                pil_detail_image = Image.fromarray(detail_np).convert("RGB")
+            img_np = (np.clip(images[i].cpu().numpy(), 0, 1) * 255).astype(np.uint8)
+            pil_base = Image.fromarray(img_np).convert("RGB")
+            merged_data = {}
+
+            if extraction_mode == "characters":
+                body_data = self._extract_json_from_image(pil_base, PROMPT_BODY, temperature, max_new_tokens)
                 
-                # SOTA FIX: Extract mathematical skin tone and enforce it
-                math_skin_tone = self._extract_mathematical_skin_tone(pil_detail_image)
-                face_data = self._extract_json_from_image(pil_detail_image, question_face, temperature, max_new_tokens)
-                face_data["skin_tone"] = math_skin_tone 
-            
-            merged_data = {**body_data, **face_data}
+                face_data = {}
+                if detail_images_batch is not None and i < detail_images_batch.shape[0]:
+                    pil_detail = Image.fromarray((np.clip(detail_images_batch[i].cpu().numpy(), 0, 1) * 255).astype(np.uint8)).convert("RGB")
+                    
+                    # Split Inference: Biological Pass + Hair Geometry Pass
+                    bio_data = self._extract_json_from_image(pil_detail, PROMPT_BIO, temperature, max_new_tokens)
+                    hair_data = self._extract_json_from_image(pil_detail, PROMPT_HAIR, temperature, max_new_tokens)
+                    math_skin = {"skin_tone": self._extract_mathematical_skin_tone(pil_detail)}
+                    
+                    face_data = {**bio_data, **hair_data, **math_skin}
+                
+                merged_data = {**body_data, **face_data}
+
+            elif extraction_mode == "background":
+                # Split Inference: Semantics + Spatial Engine
+                semantic_data = self._extract_json_from_image(pil_base, PROMPT_BG_SEMANTIC, temperature, max_new_tokens)
+                spatial_data = self._extract_json_from_image(pil_base, PROMPT_BG_SPATIAL, temperature, max_new_tokens)
+                merged_data = {**semantic_data, **spatial_data}
+
             results.append(merged_data)
 
         if not keep_model_loaded:
-            del self.model
-            del self.processor
-            self.model, self.processor, self.current_model_name, self.current_quant = None, None, None, None
-            gc.collect()
-            mm.soft_empty_cache()
-            torch.cuda.empty_cache()
+            del self.model, self.processor
+            self.model = self.processor = self.current_model_name = self.current_quant = None
+            gc.collect(); mm.soft_empty_cache(); torch.cuda.empty_cache()
 
         return (json.dumps(results),)
 
