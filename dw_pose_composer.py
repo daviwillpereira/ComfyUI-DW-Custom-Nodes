@@ -251,7 +251,8 @@ class OpenPoseRenderer:
         for char in sorted_chars_masks:
             char_mask = np.zeros((self.scene.height, self.scene.width), dtype=np.uint8)
             
-            base_thickness = 50 if char.build in ["heavy", "muscular"] else 35
+            # FIX: Expanded volumetric mask to give SDXL breathing room for clothes/weight
+            base_thickness = 85 if char.build in ["heavy", "muscular"] else 65
             if char.age_group in ["child", "baby"]:
                 base_thickness = int(base_thickness * 0.7)
 
@@ -292,7 +293,8 @@ class OpenPoseRenderer:
                     cv2.line(char_mask, pt1, pt2, 255, thickness=current_thickness, lineType=cv2.LINE_AA)
             
             if 0 in char.keypoints:
-                head_radius = 85 if char.gender == "female" else 75
+                # FIX: Expanded head radius for hair volume
+                head_radius = 120 if char.gender == "female" else 105
                 if char.age_group in ["child", "baby"]:
                     head_radius = int(head_radius * 0.7)
                 cv2.circle(char_mask, char.keypoints[0], head_radius, 255, thickness=-1, lineType=cv2.LINE_AA)
@@ -425,6 +427,13 @@ class DW_DynamicPoseComposer:
             outfit_lower = get_valid_outfit(raw.get("outfit_lower"), "jeans")
             outfit_footwear = get_valid_outfit(raw.get("outfit_footwear"), "sneakers")
             
+            # Trap 1: Prevent shirt-on-legs attention bleed
+            if "shirt" in outfit_lower or "blouse" in outfit_lower:
+                outfit_lower = "jeans"
+            # Trap 2: Prevent giant boots
+            if "shoes" == outfit_footwear.strip():
+                outfit_footwear = "sneakers"
+                
             combined_outfit = f"{outfit_upper}, {outfit_lower}, {outfit_footwear}"
             
             mapped = {
