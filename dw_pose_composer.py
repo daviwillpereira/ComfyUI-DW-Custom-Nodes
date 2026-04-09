@@ -351,12 +351,12 @@ class DW_DynamicPoseComposer:
     def generate_rigs(self, width: int, height: int, vision_context: str, clip, global_positive: str, global_negative: str):
         import json
         
-        # SOTA FIX: State Machine for Camera Perspective
-        # Default Fallback (Neutral)
+        # FIX: State Machine for Camera Perspective
         floor_y_percent = 0.85
         global_scale = 0.70
         camera_elevation = 0.0
         perspective_shot_global = "eye-level shot"
+        global_lighting = "cinematic lighting" # Nova variável
         
         parsed_global_positive = global_positive
         
@@ -365,9 +365,10 @@ class DW_DynamicPoseComposer:
             if isinstance(bg_data, list) and len(bg_data) > 0 and isinstance(bg_data[0], dict):
                 bg_dict = bg_data[0]
                 
-                # 1. State Routing
+                extracted_light = str(bg_dict.get("lighting_conditions", "")).strip()
+                if extracted_light and extracted_light.lower() not in ["null", "none", "unknown"]:
+                    global_lighting = f"{extracted_light} lighting"
                 cam_angle = str(bg_dict.get("camera_angle", "eye_level")).lower()
-                
                 if "high" in cam_angle:
                     floor_y_percent, global_scale, camera_elevation = 0.90, 0.60, 0.40
                     perspective_shot_global = "high angle shot, looking down"
@@ -604,7 +605,7 @@ class DW_DynamicPoseComposer:
             clean_outfit = outfit.replace("wearing ", "").strip()
             
             # FIX: Consume the State Machine perspective
-            regional_text = f"A photorealistic {exact_age} {build_cat} {exact_build} {noun}, {traits}, perfectly shaped symmetric ears, wearing {clean_outfit}, {action_context}, {perspective_shot_global}, cinematic lighting"
+            regional_text = f"A photorealistic {exact_age} {build_cat} {exact_build} {noun}, {traits}, perfectly shaped symmetric ears, wearing {clean_outfit}, {action_context}, {perspective_shot_global}, {global_lighting}"
             regional_text = " ".join(regional_text.split())
             telemetry_lines.append(f"- **{char.char_id}**: `{regional_text}`")
             
