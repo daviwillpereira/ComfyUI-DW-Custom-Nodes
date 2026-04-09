@@ -385,20 +385,20 @@ class DW_DynamicPoseComposer:
                 combined_outfit = raw.get("outfit", "modern stylish casual clothes")
             
             mapped = {
-                "gender": raw.get("gender", "male").lower(),
-                "age_group": raw.get("age_group", "adult").lower(),
-                "exact_age": raw.get("exact_age", "30 years old").lower(),
-                "build_cat": raw.get("physical_build", raw.get("build_cat", "regular")).lower(),
-                "exact_build": raw.get("exact_build", "average build").lower(),
-                "skin": raw.get("skin_tone", raw.get("skin", "natural skin")).lower(),
-                "hair_length": raw.get("hair_length", "").lower(),
-                "hair_volume": raw.get("hair_volume", "").lower(),
-                "hair_color": raw.get("hair_color", "dark").lower(),
-                "hair_texture": raw.get("hair_texture", "straight").lower(),
-                "eyes": raw.get("eyes", "brown eyes").lower(),
-                "beard": raw.get("beard_style_and_color", raw.get("beard", "no beard")).lower(),
-                "glasses": raw.get("glasses", "no glasses").lower(),
-                "outfit": combined_outfit.lower()
+                "gender": str(raw.get("gender") or "male").lower(),
+                "age_group": str(raw.get("age_group") or "adult").lower(),
+                "exact_age": str(raw.get("exact_age") or "30 years old").lower(),
+                "build_cat": str(raw.get("physical_build") or raw.get("build_cat") or "regular").lower(),
+                "exact_build": str(raw.get("exact_build") or "average build").lower(),
+                "skin": str(raw.get("skin_tone") or raw.get("skin") or "natural skin").lower(),
+                "hair_length": str(raw.get("hair_length") or "").lower(),
+                "hair_volume": str(raw.get("hair_volume") or "").lower(),
+                "hair_color": str(raw.get("hair_color") or "dark").lower(),
+                "hair_texture": str(raw.get("hair_texture") or "straight").lower(),
+                "eyes": str(raw.get("eyes") or "brown eyes").lower(),
+                "beard": str(raw.get("beard_style_and_color") or raw.get("beard") or "no beard").lower(),
+                "glasses": str(raw.get("glasses") or "no glasses").lower(),
+                "outfit": str(combined_outfit or "modern stylish casual clothes").lower()
             }
             
             if mapped["age_group"] not in ["baby", "child", "teenager", "adult", "elder"]: mapped["age_group"] = "adult"
