@@ -125,16 +125,20 @@ class DW_QwenBatchExtractor:
         batch_size = images.shape[0]
         results = []
 
-        PROMPT_BODY = 'Analyze this full-body image. Output STRICTLY JSON. NEVER output "null" or "not visible".\nKeys:\n"gender"("male"|"female"), "age_group", "exact_age", "physical_build"("slim"|"regular"|"heavy"), "exact_build", "outfit_upper", "outfit_lower"(MUST be lower-body clothes like jeans/pants/skirt. NEVER output a shirt here), "outfit_footwear"(e.g., "sneakers")'
+        # FIX: Bulletproof Prompts to prevent 3B Model Hallucination and Prompt Injection
+        PROMPT_BODY = 'Analyze this full-body image. Output STRICTLY JSON. NEVER output "null".\nKeys:\n"gender"("male"|"female"), "age_group", "exact_age", "physical_build"("slim"|"regular"|"heavy"), "exact_build", "outfit_upper", "outfit_lower"(MUST be lower-body clothes like jeans/pants/skirt. NEVER output a shirt here), "outfit_footwear"(e.g., "sneakers")'
         
-        PROMPT_BIO = 'Analyze this face. Output STRICTLY JSON.\nKeys:\n"eyes"(e.g. "brown eyes"), "beard_style_and_color"(Specify density/length: "light stubble", "clean-shaven", "massive long beard", "goatee"), "glasses", "distinctive_features"("none" or specify VISIBLE anomalies/traits like "vitiligo", "heavy freckles", "birthmark", "facial scars")'
+        PROMPT_BIO = 'Analyze this face. Output STRICTLY JSON.\nKeys:\n"eyes", "beard_style_and_color"(Specify density: "light stubble", "clean-shaven", "long beard"), "glasses", "distinctive_features"("none" or specify VISIBLE anomalies like "vitiligo", "freckles")'
         
-        PROMPT_HAIR = 'Analyze ONLY the hair geometry. Output STRICTLY JSON.\nKeys:\n"hair_length", "hair_volume"("flat", "thin", "regular", "thick"), "hair_color"(Handle complex cases: "two-tone black and blonde", "salt and pepper", "pink dyed", or exact shades), "hair_texture"("straight", "wavy", "curly", "coily", "dreadlocks", "micro braids", "buzz cut", "bald"), "hair_style"("worn down", "ponytail", "man bun", "fade")'
+        # FIX: Removed exotic examples that cause prompt injection. Forced strict reading.
+        PROMPT_HAIR = 'Analyze ONLY the hair geometry. Output STRICTLY JSON.\nKeys:\n"hair_length", "hair_volume"("flat", "thin", "regular", "thick"), "hair_color"(Exact natural or dyed shade. DO NOT invent colors not in the image. e.g., "dark brown", "burgundy", "black"), "hair_texture"("straight", "wavy", "curly", "coily", "dreadlocks", "bald"), "hair_style"("worn down", "ponytail", "updo")'
         
-        PROMPT_BG_SEMANTIC = 'Analyze background STRICTLY based on VISUAL EVIDENCE. If it is daytime, say day. Output STRICTLY JSON.\nKeys:\n"location_type"("famous_landmark"|"generic_location"), "location_name", "architecture_style", "ground_material", "lighting_conditions", "atmosphere"'
+        # FIX: Forced attention to the actual floor pixels, not the building material.
+        PROMPT_BG_SEMANTIC = 'Analyze background. Output STRICTLY JSON.\nKeys:\n"location_type", "location_name", "architecture_style", "ground_material"(Look ONLY at the floor/street. E.g., "grass", "concrete", "paving stones". NEVER say iron/metal unless the floor is actually metal), "lighting_conditions", "atmosphere"'
         
-        PROMPT_BG_SPATIAL = 'Classify camera angle. Output STRICTLY JSON.\nKeys:\n"camera_angle" (MUST be EXACTLY ONE: "low_angle" if pointing UP at a tall structure/sky, "high_angle" ONLY if pointing DOWN at the floor from above, "eye_level" if straight ahead).'
-        
+        # FIX: Idiot-proof spatial reasoning.
+        PROMPT_BG_SPATIAL = 'Classify camera angle. Output STRICTLY JSON.\nKeys:\n"camera_angle" (MUST be "low_angle" if the image shows a tall structure/monument towering above the horizon. MUST be "high_angle" ONLY if looking down at the ground from above. Otherwise "eye_level").'
+
         for i in range(batch_size):
             img_np = (np.clip(images[i].cpu().numpy(), 0, 1) * 255).astype(np.uint8)
             pil_base = Image.fromarray(img_np).convert("RGB")
