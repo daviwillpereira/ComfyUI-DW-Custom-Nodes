@@ -1,7 +1,7 @@
 import torch
 import torch.nn.functional as F
-import numpy as np
 import nodes
+import json
 
 class DW_SemanticIsolationEngine:
     """
@@ -20,7 +20,7 @@ class DW_SemanticIsolationEngine:
                 "grounding_dino_model": ("GROUNDING_DINO_MODEL",),
                 "prompt": ("STRING", {"default": "head, face, hair"}),
                 "threshold": ("FLOAT", {"default": 0.3, "min": 0.0, "max": 1.0, "step": 0.01}),
-                "mask_dilation": ("INT", {"default": 10, "min": 0, "max": 100, "step": 1})
+                "mask_dilation": ("INT", {"default": 15, "min": 0, "max": 100, "step": 1})
             }
         }
 
@@ -38,10 +38,10 @@ class DW_SemanticIsolationEngine:
 
     def isolate_semantics(self, images, sam_model, grounding_dino_model, prompt, threshold, mask_dilation):
         
-        # 1. Dependency Injection: Fetching ComfyUI-Segment-Anything native nodes
+        # Dependency Injection: Fetching ComfyUI-Segment-Anything native node
         DinoNode = nodes.NODE_CLASS_MAPPINGS.get("GroundingDinoSAMSegment (segment anything)")
         if not DinoNode:
-            raise RuntimeError("[DW] Critical: 'comfyui_segment_anything' is not installed. DINO/SAM pipeline aborted.")
+            raise RuntimeError("[DW] Critical: 'comfyui_segment_anything' is not installed. Pipeline aborted.")
 
         segment_node = DinoNode()
         segment_func = getattr(segment_node, segment_node.FUNCTION)
@@ -55,7 +55,7 @@ class DW_SemanticIsolationEngine:
             img_tensor = images[i].unsqueeze(0)
             
             try:
-                # 2. Execute Zero-Shot Detection & Segmentation
+                # Zero-Shot Detection & Segmentation
                 res = segment_func(
                     sam_model=sam_model,
                     grounding_dino_model=grounding_dino_model,
@@ -64,18 +64,16 @@ class DW_SemanticIsolationEngine:
                     threshold=threshold
                 )
                 
-                # SAM returns (IMAGE, MASK). We extract the mask.
-                raw_mask = res[1].squeeze(0) # Shape: [H, W]
+                raw_mask = res[1].squeeze(0) 
                 
-                # 3. Morphological Dilation to capture loose hair strands
+                # Morphological Dilation for loose hair strands
                 dilated_mask = self._dilate_mask(raw_mask, mask_dilation)
                 
-                # 4. RGB Isolation (Matrix Multiplication)
-                # Multiply the original RGB image by the 0.0-1.0 mask to annihilate the background
+                # RGB Isolation (Matrix Annihilation of Background)
                 mask_rgb = dilated_mask.unsqueeze(-1).repeat(1, 1, 3)
                 isolated_img = img_tensor.squeeze(0) * mask_rgb
                 
-                # 5. Extract BBOX Coordinates from the mask for Phase 4 Telemetry
+                # Extract BBOX Coordinates for Telemetry/Phase 4
                 active_pixels = torch.nonzero(dilated_mask > 0.5)
                 if active_pixels.nelement() == 0:
                     bbox = [0, 0, 0, 0]
@@ -93,16 +91,10 @@ class DW_SemanticIsolationEngine:
 
         final_images = torch.stack(isolated_images)
         final_masks = torch.stack(semantic_masks)
-        
-        import json
         telemetry = json.dumps(bbox_metrics, indent=2)
 
         return (final_images, final_masks, telemetry)
 
 # --- REGISTRATION ---
-NODE_CLASS_MAPPINGS = {
-    "DW_SemanticIsolationEngine": DW_SemanticIsolationEngine
-}
-NODE_DISPLAY_NAME_MAPPINGS = {
-    "DW_SemanticIsolationEngine": "DW Semantic Isolation Engine"
-}
+NODE_CLASS_MAPPINGS = {"DW_SemanticIsolationEngine": DW_SemanticIsolationEngine}
+NODE_DISPLAY_NAME_MAPPINGS = {"DW_SemanticIsolationEngine": "DW Semantic Isolation Engine"}
