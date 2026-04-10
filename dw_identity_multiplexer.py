@@ -1,13 +1,12 @@
 import torch
 import torch.nn.functional as F
-import numpy as np
 import nodes
 
 class DW_IdentityMultiplexer:
     """
     SOTA Identity Injection Engine (Color & Skin Anchor).
     Consumes mathematically pure semantic masks and isolated RGB tensors from Phase 1.
-    Delegates structural geometry to Phase 4, keeping Phase 2 strictly for Chromatic/Phenotype locking
+    Delegates structural geometry to Phase 4, keeping Phase 2 strictly for Chromatic locking
     via IP-Adapter with Temporal Easing to preserve global lighting.
     """
     @classmethod
@@ -16,15 +15,10 @@ class DW_IdentityMultiplexer:
             "required": {
                 "model": ("MODEL",),
                 "ipadapter": ("IPADAPTER",),
-                
-                # SOTA FIX: Inputs coming directly from the DW Semantic Isolation Engine
                 "isolated_image_batch": ("IMAGE",), 
                 "semantic_mask_batch": ("MASK",), 
-                
                 "base_positive": ("CONDITIONING",),
                 "base_negative": ("CONDITIONING",),
-                
-                # SOTA FIX: Temporal Easing to prevent "Flashlight Effect" on nighttime scenes
                 "ipadapter_weight": ("FLOAT", {"default": 0.65, "min": 0.0, "max": 3.0, "step": 0.01}),
                 "ipadapter_end_at": ("FLOAT", {"default": 0.70, "min": 0.0, "max": 1.0, "step": 0.05}),
             },
@@ -60,24 +54,14 @@ class DW_IdentityMultiplexer:
 
         batch_size = isolated_image_batch.shape[0]
         mask_count = semantic_mask_batch.shape[0]
-        
-        # Format the reference images to 512x512 to satisfy CLIPVision
         processed_isolated_images = torch.stack([self._pad_to_512(img) for img in isolated_image_batch])
 
         for i in range(batch_size):
-            # 1. Fetch the isolated image (Face + Hair floating in black void)
             ref_tensor = processed_isolated_images[i].unsqueeze(0)
-            
-            # 2. Fetch the corresponding pixel-perfect semantic mask
             char_mask = semantic_mask_batch[i if i < mask_count else mask_count - 1].unsqueeze(0)
-            
             log_entry = f"- **Subject {i}**: "
 
             try:
-                # 3. Apply IP-Adapter. 
-                # Why it's SOTA: The 'image' has no clothes/background to bleed.
-                # The 'attn_mask' perfectly shields the Phase 1 body/clothes.
-                # 'end_at' ensures shadows and lighting from P1 reclaim the scene in the final 30% of steps.
                 final_model = ip_node.apply_ipadapter(
                     final_model, 
                     ipadapter, 
@@ -101,9 +85,7 @@ class DW_IdentityMultiplexer:
         telemetry.append("---")
         telemetry.append("⚠️ *InstantID bypassed intentionally. Structural geometry delegated to Phase 4.*")
 
-        # Pass through the Conditioning unaltered (Phase 2 is now purely latent tensor modification)
         return (final_model, base_positive, base_negative, "\n".join(telemetry))
 
-# --- REGISTRATION ---
 NODE_CLASS_MAPPINGS = {"DW_IdentityMultiplexer": DW_IdentityMultiplexer}
 NODE_DISPLAY_NAME_MAPPINGS = {"DW_IdentityMultiplexer": "DW Chromatic Multiplexer (P2)"}
