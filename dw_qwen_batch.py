@@ -130,8 +130,8 @@ class DW_QwenBatchExtractor:
         
         PROMPT_BIO = 'Analyze this face. Output STRICTLY JSON.\nKeys:\n"eyes", "beard_style_and_color"(Specify density: "light stubble", "clean-shaven", "long beard"), "glasses", "distinctive_features"("none" or specify VISIBLE anomalies like "vitiligo", "freckles")'
         
-        # FIX: Removed exotic examples that cause prompt injection. Forced strict reading.
-        PROMPT_HAIR = 'Analyze ONLY the hair geometry. Output STRICTLY JSON.\nKeys:\n"hair_length", "hair_volume"("flat", "thin", "regular", "thick"), "hair_color"(Exact natural or dyed shade. DO NOT invent colors not in the image. e.g., "dark brown", "burgundy", "black"), "hair_texture"("straight", "wavy", "curly", "coily", "dreadlocks", "bald"), "hair_style"("worn down", "ponytail", "updo")'
+        # FIX: Expanded Strict Enumeration for comprehensive demographic coverage
+        PROMPT_HAIR = 'Analyze ONLY the hair geometry. Output STRICTLY JSON.\nKeys:\n"hair_length"(MUST BE EXACTLY ONE OF: "bald", "buzz cut length", "short", "shoulder-length", "medium", "long", "very long"), "hair_volume"(MUST BE EXACTLY ONE OF: "flat", "regular". STRICTLY FORBIDDEN to output "thick" unless the hair has massive root volume or is a heavy afro. If hair lies flat against the scalp, output "flat"), "hair_texture"(MUST BE EXACTLY ONE OF: "straight", "wavy", "curly", "coily", "dreadlocks"), "hair_style"(MUST BE EXACTLY ONE OF: "worn down", "ponytail", "tied back", "updo", "braids", "bun", "fade", "pigtails", "half up")'
         
         # FIX: Forced attention to the actual floor pixels, not the building material.
         PROMPT_BG_SEMANTIC = 'Analyze background. Output STRICTLY JSON.\nKeys:\n"location_type", "location_name", "architecture_style", "ground_material"(Look ONLY at the floor/street. E.g., "grass", "concrete", "paving stones". NEVER say iron/metal unless the floor is actually metal), "lighting_conditions", "atmosphere"'
