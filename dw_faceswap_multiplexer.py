@@ -29,7 +29,6 @@ class DW_FaceSwapMultiplexer:
 
     def multiplex_faceswap(self, upscaled_canvas, reference_image_batch, face_model, facedetection, face_restore_model, face_restore_visibility, codeformer_weight):
         
-        # 1. Dependency Injection (Fetching ReActor Native Node)
         ReActorNode = nodes.NODE_CLASS_MAPPINGS.get("ReActorFaceSwap")
         if not ReActorNode:
             raise RuntimeError("ERROR: ReActor custom node not found. Ensure 'comfyui-reactor-node' is properly installed.")
@@ -50,12 +49,10 @@ class DW_FaceSwapMultiplexer:
             "### 🔄 DAISY-CHAIN SWAP LOG"
         ]
 
-        # 2. O(N) Programmatic Daisy-Chain Loop
         for i in range(batch_size):
             ref_face = reference_image_batch[i].unsqueeze(0)
             
             try:
-                # Dynamic index mapping: Subject 'i' matches Face 'i' (Left-to-Right layout logic)
                 res = reactor_func(
                     enabled=True,
                     input_image=current_canvas,
@@ -69,10 +66,11 @@ class DW_FaceSwapMultiplexer:
                     detect_gender_source="no",
                     input_faces_index=str(i),
                     source_faces_index="0", 
-                    console_log_level=1
+                    console_log_level=1,
+                    # SOTA FIX: Force strict left-to-right spatial mapping to prevent bounding-box size cross-swaps
+                    input_faces_order="left-right"
                 )
                 
-                # Overwrite the canvas for the next iteration (Daisy-Chain logic)
                 current_canvas = res[0]
                 telemetry.append(f"- **Subject {i}**: ✅ Face Swapped (Spatial Index: {i})")
                 
