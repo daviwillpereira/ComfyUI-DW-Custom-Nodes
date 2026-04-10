@@ -1,12 +1,14 @@
 import torch
 import torch.nn.functional as F
+import numpy as np
 import nodes
 
-class DW_AutoFaceCropper:
+class DW_SemanticIsolationEngine:
     """
-    O(N) Batch Looper for Face Detection and Native Tensor Cropping.
-    Bypasses Impact Pack's volatile image conversion nodes by slicing the 
-    tensors mathematically and interpolating them to a uniform 512x512 batch.
+    State-of-the-Art Semantic Isolation Engine.
+    Uses Dependency Injection to interface with GroundingDINO and SAM HQ.
+    Outputs mathematically pure semantic masks and isolated RGB tensors
+    to prevent visual cross-contamination in Latent Space operations.
     """
     
     @classmethod
@@ -14,74 +16,93 @@ class DW_AutoFaceCropper:
         return {
             "required": {
                 "images": ("IMAGE",),
-                "bbox_detector": ("BBOX_DETECTOR",),
-                "crop_factor": ("FLOAT", {"default": 2.0, "min": 1.0, "max": 5.0, "step": 0.1}),
+                "sam_model": ("SAM_MODEL",),
+                "grounding_dino_model": ("GROUNDING_DINO_MODEL",),
+                "prompt": ("STRING", {"default": "head, face, hair"}),
+                "threshold": ("FLOAT", {"default": 0.3, "min": 0.0, "max": 1.0, "step": 0.01}),
+                "mask_dilation": ("INT", {"default": 10, "min": 0, "max": 100, "step": 1})
             }
         }
-        
-    RETURN_TYPES = ("IMAGE",)
-    RETURN_NAMES = ("FACE_IMAGE_BATCH",)
-    FUNCTION = "batch_crop"
+
+    RETURN_TYPES = ("IMAGE", "MASK", "STRING")
+    RETURN_NAMES = ("ISOLATED_IMAGE_BATCH", "SEMANTIC_MASK_BATCH", "BBOX_METRICS")
+    FUNCTION = "isolate_semantics"
     CATEGORY = "DW_Nodes/Vision"
 
-    def batch_crop(self, images, bbox_detector, crop_factor):
-        BboxDetector = nodes.NODE_CLASS_MAPPINGS.get("BboxDetectorSEGS")
-        
-        if not BboxDetector:
-            raise RuntimeError("ERROR: Impact Pack 'BboxDetectorSEGS' not found. Ensure Impact Pack is installed.")
-            
-        bbox_func = getattr(BboxDetector(), BboxDetector().FUNCTION)
-        
-        processed_crops = []
-        batch_size = images.shape[0]
-        target_size = 512
-        
-        for i in range(batch_size):
-            single_img = images[i].unsqueeze(0) # [1, H, W, C]
-            _, h, w, _ = single_img.shape
-            
-            # 1. Execute detection (crop_factor=1.0 here because we apply it mathematically later)
-            segs_out = bbox_func(bbox_detector, single_img, 0.5, 0, 1.0, 10, "face")[0]
-            segs_list = segs_out[1]
-            
-            if len(segs_list) == 0:
-                print(f"[DW_AutoCropper] Warning: No face detected in frame {i}. Passing original image.")
-                crop_tensor = single_img
-            else:
-                # 2. Extract largest face coordinates
-                try:
-                    # SEG object attribute
-                    largest_seg = max(segs_list, key=lambda s: (s.bbox[2]-s.bbox[0]) * (s.bbox[3]-s.bbox[1]))
-                    x1, y1, x2, y2 = largest_seg.bbox
-                except AttributeError:
-                    # Tuple fallback
-                    largest_seg = max(segs_list, key=lambda s: (s[1][2]-s[1][0]) * (s[1][3]-s[1][1]))
-                    x1, y1, x2, y2 = largest_seg[1]
-                    
-                # 3. Mathematical Crop with crop_factor
-                cx = (x1 + x2) / 2.0
-                cy = (y1 + y2) / 2.0
-                box_w = x2 - x1
-                box_h = y2 - y1
-                
-                side = max(box_w, box_h) * crop_factor
-                
-                new_x1 = max(0, int(cx - side / 2.0))
-                new_y1 = max(0, int(cy - side / 2.0))
-                new_x2 = min(w, int(cx + side / 2.0))
-                new_y2 = min(h, int(cy + side / 2.0))
-                
-                crop_tensor = single_img[:, new_y1:new_y2, new_x1:new_x2, :]
-            
-            # 4. Standardize dimensions for batching [1, 512, 512, 3]
-            crop_c = crop_tensor.permute(0, 3, 1, 2) # [1, C, H, W]
-            resized_c = F.interpolate(crop_c, size=(target_size, target_size), mode='bicubic', align_corners=False)
-            processed_crops.append(resized_c.permute(0, 2, 3, 1)) # [1, target_size, target_size, C]
-            
-        # 5. Assemble final tensor batch
-        final_batch = torch.cat(processed_crops, dim=0) # [N, 512, 512, 3]
-        
-        return (final_batch,)
+    def _dilate_mask(self, mask: torch.Tensor, dilation: int) -> torch.Tensor:
+        if dilation <= 0: return mask
+        mask_4d = mask.unsqueeze(0).unsqueeze(0)
+        kernel_size = dilation * 2 + 1
+        dilated = F.max_pool2d(mask_4d, kernel_size=kernel_size, stride=1, padding=dilation)
+        return dilated.squeeze(0).squeeze(0)
 
-NODE_CLASS_MAPPINGS = {"DW_AutoFaceCropper": DW_AutoFaceCropper}
-NODE_DISPLAY_NAME_MAPPINGS = {"DW_AutoFaceCropper": "DW Auto Face Cropper"}
+    def isolate_semantics(self, images, sam_model, grounding_dino_model, prompt, threshold, mask_dilation):
+        
+        # 1. Dependency Injection: Fetching ComfyUI-Segment-Anything native nodes
+        DinoNode = nodes.NODE_CLASS_MAPPINGS.get("GroundingDinoSAMSegment (segment anything)")
+        if not DinoNode:
+            raise RuntimeError("[DW] Critical: 'comfyui_segment_anything' is not installed. DINO/SAM pipeline aborted.")
+
+        segment_node = DinoNode()
+        segment_func = getattr(segment_node, segment_node.FUNCTION)
+
+        batch_size = images.shape[0]
+        isolated_images = []
+        semantic_masks = []
+        bbox_metrics = []
+
+        for i in range(batch_size):
+            img_tensor = images[i].unsqueeze(0)
+            
+            try:
+                # 2. Execute Zero-Shot Detection & Segmentation
+                res = segment_func(
+                    sam_model=sam_model,
+                    grounding_dino_model=grounding_dino_model,
+                    image=img_tensor,
+                    prompt=prompt,
+                    threshold=threshold
+                )
+                
+                # SAM returns (IMAGE, MASK). We extract the mask.
+                raw_mask = res[1].squeeze(0) # Shape: [H, W]
+                
+                # 3. Morphological Dilation to capture loose hair strands
+                dilated_mask = self._dilate_mask(raw_mask, mask_dilation)
+                
+                # 4. RGB Isolation (Matrix Multiplication)
+                # Multiply the original RGB image by the 0.0-1.0 mask to annihilate the background
+                mask_rgb = dilated_mask.unsqueeze(-1).repeat(1, 1, 3)
+                isolated_img = img_tensor.squeeze(0) * mask_rgb
+                
+                # 5. Extract BBOX Coordinates from the mask for Phase 4 Telemetry
+                active_pixels = torch.nonzero(dilated_mask > 0.5)
+                if active_pixels.nelement() == 0:
+                    bbox = [0, 0, 0, 0]
+                else:
+                    y_min, x_min = torch.min(active_pixels, dim=0)[0].tolist()
+                    y_max, x_max = torch.max(active_pixels, dim=0)[0].tolist()
+                    bbox = [x_min, y_min, x_max, y_max]
+
+                isolated_images.append(isolated_img)
+                semantic_masks.append(dilated_mask)
+                bbox_metrics.append({"subject_index": i, "bbox": bbox})
+
+            except Exception as e:
+                raise RuntimeError(f"[DW] Semantic Isolation failed on Subject {i}. Details: {e}")
+
+        final_images = torch.stack(isolated_images)
+        final_masks = torch.stack(semantic_masks)
+        
+        import json
+        telemetry = json.dumps(bbox_metrics, indent=2)
+
+        return (final_images, final_masks, telemetry)
+
+# --- REGISTRATION ---
+NODE_CLASS_MAPPINGS = {
+    "DW_SemanticIsolationEngine": DW_SemanticIsolationEngine
+}
+NODE_DISPLAY_NAME_MAPPINGS = {
+    "DW_SemanticIsolationEngine": "DW Semantic Isolation Engine"
+}
