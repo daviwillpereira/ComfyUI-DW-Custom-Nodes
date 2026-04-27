@@ -4,7 +4,7 @@ import nodes
 
 class DW_IdentityMultiplexer:
     """
-    SOTA Identity Injection Engine (Color & Skin Anchor).
+    Identity Injection Engine (Color & Skin Anchor).
     Consumes mathematically pure semantic masks and isolated RGB tensors from Phase 1.
     Delegates structural geometry to Phase 4, keeping Phase 2 strictly for Chromatic locking
     via IP-Adapter with Temporal Easing to preserve global lighting.

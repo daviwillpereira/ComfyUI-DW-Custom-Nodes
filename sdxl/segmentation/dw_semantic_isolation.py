@@ -5,7 +5,7 @@ import json
 
 class DW_SemanticIsolationEngine:
     """
-    State-of-the-Art Semantic Isolation Engine.
+    Semantic Isolation Engine.
     Uses Dependency Injection to interface with GroundingDINO and SAM HQ.
     Outputs mathematically pure semantic masks and isolated RGB tensors
     to prevent visual cross-contamination in Latent Space operations.
