@@ -11,8 +11,8 @@ import folder_paths
 
 class PiAPI_Kling_Node:
     """
-    SOTA Zero-Dependency Custom Node for PiAPI Kling Integration.
-    Features: Multi-Shot UI, Direct Disk I/O, and VRAM Tensor Decoding for Post-Production.
+    Zero-Dependency Custom Node for PiAPI Kling Integration.
+    Engineered for Kling 3.0 Standard (Video Only) with Multi-Shot capability.
     """
     
     @classmethod
@@ -20,14 +20,14 @@ class PiAPI_Kling_Node:
         return {
             "required": {
                 "prompt": ("STRING", {"multiline": True}),
-                "duration": ("INT", {"default": 5, "min": 3, "max": 15}),
+                "duration": ("INT", {"default": 5, "min": 3, "max": 10}),
                 "aspect_ratio": (["16:9", "9:16", "1:1"], {"default": "9:16"}),
             },
             "optional": {
                 "prompt_scene_2": ("STRING", {"multiline": True}),
-                "duration_scene_2": ("INT", {"default": 0, "min": 0, "max": 15}),
+                "duration_scene_2": ("INT", {"default": 0, "min": 0, "max": 10}),
                 "prompt_scene_3": ("STRING", {"multiline": True}),
-                "duration_scene_3": ("INT", {"default": 0, "min": 0, "max": 15}),
+                "duration_scene_3": ("INT", {"default": 0, "min": 0, "max": 10}),
                 "first_frame": ("IMAGE",),
                 "last_frame": ("IMAGE",),
             }
@@ -42,12 +42,16 @@ class PiAPI_Kling_Node:
         image_array = tensor[0].cpu().numpy()
         image_array = (image_array * 255.0).clip(0, 255).astype(np.uint8)
         pil_image = Image.fromarray(image_array)
+        
+        # FIX: RGBA to RGB Matrix Sanitization
+        if pil_image.mode == "RGBA":
+            pil_image = pil_image.convert("RGB")
+            
         buffer = BytesIO()
         pil_image.save(buffer, format="JPEG", quality=95)
         return base64.b64encode(buffer.getvalue()).decode("utf-8")
 
     def load_video_to_tensor(self, video_path):
-        """Decodes MP4 binary into ComfyUI-compatible [F, H, W, C] tensors."""
         cap = cv2.VideoCapture(video_path)
         frames = []
         while True:
@@ -75,30 +79,36 @@ class PiAPI_Kling_Node:
             "Accept": "application/json"
         }
 
+        # Initialize Base Payload for Kling 3.0 Standard
         payload = {
             "model": "kling",
-            "task_type": "omni_video_generation", 
+            "task_type": "video_generation", 
             "input": {
                 "version": "3.0",
                 "aspect_ratio": aspect_ratio
             }
         }
         
+        # Dynamic Shot Array Construction
         shots = [{"prompt": prompt, "duration": int(duration)}]
-        if prompt_scene_2 and prompt_scene_2.strip() and duration_scene_2 > 0:
+        
+        if prompt_scene_2 and prompt_scene_2.strip() and int(duration_scene_2) > 0:
             shots.append({"prompt": prompt_scene_2, "duration": int(duration_scene_2)})
-        if prompt_scene_3 and prompt_scene_3.strip() and duration_scene_3 > 0:
+            
+        if prompt_scene_3 and prompt_scene_3.strip() and int(duration_scene_3) > 0:
             shots.append({"prompt": prompt_scene_3, "duration": int(duration_scene_3)})
             
+        # Payload Injection Routing
         if len(shots) > 1:
             total_duration = sum(s["duration"] for s in shots)
             if total_duration > 15:
-                raise ValueError(f"Constraint Violation: Multi-shot total duration ({total_duration}s) exceeds 15s limit.")
+                raise ValueError(f"Constraint Violation: Multi-shot total duration ({total_duration}s) exceeds API limit.")
             payload["input"]["multi_shots"] = shots
         else:
             payload["input"]["prompt"] = prompt
             payload["input"]["duration"] = int(duration)
 
+        # Base64 Image Formatting
         if last_frame is not None:
             payload["input"]["image_tail"] = self.encode_tensor_to_base64(last_frame)
         if first_frame is not None:
@@ -106,8 +116,12 @@ class PiAPI_Kling_Node:
 
         try:
             res = requests.post("https://api.piapi.ai/api/v1/task", headers=headers, json=payload, timeout=30)
-            res.raise_for_status()
+            if not res.ok:
+                raise Exception(f"HTTP {res.status_code}: {res.text}")
+                
             task_id = res.json().get("data", {}).get("task_id")
+            if not task_id:
+                raise Exception(f"Invalid API Response Structure: {res.text}")
             
             while True:
                 time.sleep(12)
@@ -119,19 +133,18 @@ class PiAPI_Kling_Node:
                     video_url = poll_data.get("data", {}).get("output", {}).get("video_url")
                     break
                 elif status in ["failed", "canceled"]:
-                    raise Exception(f"Task failed: {status}")
+                    raise Exception(f"Task Failed at API Engine Level: {poll_data}")
 
-            # I/O Persistence
+            # Persist Video
             video_bytes = requests.get(video_url, timeout=120).content
             output_dir = folder_paths.get_output_directory()
-            target_path = os.path.join(output_dir, f"JBoggo_Kling_{task_id}.mp4")
+            target_path = os.path.join(output_dir, f"JBoggo_Kling_v3.0_{task_id}.mp4")
             
             with open(target_path, "wb") as f:
                 f.write(video_bytes)
                 
-            # VRAM Handover for Post-Production
+            # Handover Tensor
             video_tensor = self.load_video_to_tensor(target_path)
-            
             return (video_tensor, target_path,)
             
         except Exception as e:
