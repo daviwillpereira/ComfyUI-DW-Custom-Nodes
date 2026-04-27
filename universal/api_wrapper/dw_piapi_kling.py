@@ -45,9 +45,10 @@ class PiAPI_Kling_Node:
         return base64.b64encode(buffer.getvalue()).decode("utf-8")
 
     def generate_payload(self, prompt, duration, aspect_ratio, prompt_scene_2="", duration_scene_2=0, prompt_scene_3="", duration_scene_3=0, first_frame=None, last_frame=None):
-        api_key = os.getenv("PIAPIKEY") or os.getenv("PIAPI_API_KEY")
+        # Enforcing single source of truth for API credentials
+        api_key = os.getenv("PIAPI_API_KEY")
         if not api_key:
-            raise ValueError("Authentication Failed: PIAPIKEY environment variable is missing.")
+            raise ValueError("Authentication Failed: PIAPI_API_KEY environment variable is missing.")
 
         headers = {
             "x-api-key": api_key,
