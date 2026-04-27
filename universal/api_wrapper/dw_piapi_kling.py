@@ -11,8 +11,8 @@ import folder_paths
 
 class PiAPI_Kling_Node:
     """
-    The True Ultimate SOTA Custom Node for PiAPI Kling Integration.
-    Fully supports Kling 3.0 Multi-Shots schema, proper Mode Enums, and Payload Optimization.
+    SOTA Custom Node for PiAPI Kling Integration.
+    Includes Aggressive Payload Compression to bypass API Error 10000.
     """
     
     @classmethod
@@ -49,22 +49,21 @@ class PiAPI_Kling_Node:
         image_array = (image_array * 255.0).clip(0, 255).astype(np.uint8)
         pil_image = Image.fromarray(image_array)
         
-        # SOTA FIX: RGBA to RGB Matrix Sanitization
         if pil_image.mode == "RGBA":
             pil_image = pil_image.convert("RGB")
             
-        # SOTA FIX: Dynamic Downscale & Byte Optimization
-        max_dim = 1080
+        # SOTA FIX: Aggressive Compression for WAF limits (max 768px matches Kling latent target)
+        max_dim = 768
         if max(pil_image.size) > max_dim:
             ratio = max_dim / max(pil_image.size)
             new_size = (int(pil_image.width * ratio), int(pil_image.height * ratio))
             pil_image = pil_image.resize(new_size, Image.Resampling.LANCZOS)
             
         buffer = BytesIO()
-        pil_image.save(buffer, format="JPEG", quality=80, optimize=True)
+        # Drop quality to 70 and optimize to ensure minimal footprint
+        pil_image.save(buffer, format="JPEG", quality=70, optimize=True)
         base64_str = base64.b64encode(buffer.getvalue()).decode("utf-8")
         
-        # PiAPI Strict URI Formatting
         return f"data:image/jpeg;base64,{base64_str}"
 
     def load_video_to_tensor(self, video_path):
@@ -95,7 +94,6 @@ class PiAPI_Kling_Node:
             "Accept": "application/json"
         }
 
-        # Master Payload Construction
         payload = {
             "model": "kling",
             "task_type": "video_generation", 
@@ -108,7 +106,6 @@ class PiAPI_Kling_Node:
         if negative_prompt.strip():
             payload["input"]["negative_prompt"] = negative_prompt
             
-        # Camera Control Injection
         if any(v != 0.0 for v in [camera_zoom, camera_pan_x, camera_pan_y]):
             payload["input"]["camera_control"] = {
                 "type": "simple",
@@ -122,7 +119,6 @@ class PiAPI_Kling_Node:
         if first_frame is None and last_frame is None:
             payload["input"]["aspect_ratio"] = aspect_ratio
 
-        # Dynamic Shot Array Construction
         shots = [{"prompt": prompt, "duration": int(duration)}]
         
         if prompt_scene_2 and prompt_scene_2.strip() and int(duration_scene_2) > 0:
@@ -131,7 +127,6 @@ class PiAPI_Kling_Node:
         if prompt_scene_3 and prompt_scene_3.strip() and int(duration_scene_3) > 0:
             shots.append({"prompt": prompt_scene_3, "duration": int(duration_scene_3)})
             
-        # SOTA FIX: Array Injection with mandatory boolean flag
         if len(shots) > 1:
             total_duration = sum(s["duration"] for s in shots)
             if total_duration > 15:
@@ -142,7 +137,6 @@ class PiAPI_Kling_Node:
             payload["input"]["prompt"] = prompt
             payload["input"]["duration"] = int(duration)
 
-        # Base64 Assignment
         if last_frame is not None:
             payload["input"]["image_tail"] = self.encode_tensor_to_base64(last_frame)
         if first_frame is not None:
@@ -169,7 +163,6 @@ class PiAPI_Kling_Node:
                 elif status in ["failed", "canceled"]:
                     raise Exception(f"Task Failed at API Engine Level: {poll_data}")
 
-            # I/O Persistence
             video_bytes = requests.get(video_url, timeout=120).content
             output_dir = folder_paths.get_output_directory()
             target_path = os.path.join(output_dir, f"JBoggo_Kling_v{version}_{task_id}.mp4")
@@ -177,7 +170,6 @@ class PiAPI_Kling_Node:
             with open(target_path, "wb") as f:
                 f.write(video_bytes)
                 
-            # VRAM Handover
             video_tensor = self.load_video_to_tensor(target_path)
             return (video_tensor, target_path,)
             
