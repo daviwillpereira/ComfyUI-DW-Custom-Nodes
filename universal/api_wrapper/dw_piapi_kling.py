@@ -11,8 +11,8 @@ import folder_paths
 
 class PiAPI_Kling_Node:
     """
-    SOTA Custom Node for PiAPI Kling Integration.
-    Includes Aggressive Payload Compression to bypass API Error 10000.
+    The Ultimate Custom Node for PiAPI Kling Integration.
+    Features: Kling 3.0 Multi-Shots Schema, Multi-CDN Edge Offloading (Bypasses Error 10000).
     """
     
     @classmethod
@@ -44,7 +44,8 @@ class PiAPI_Kling_Node:
     FUNCTION = "generate_payload"
     CATEGORY = "DW/Universal/API"
 
-    def encode_tensor_to_base64(self, tensor):
+    def upload_tensor_to_cdn(self, tensor):
+        """FIX: Multi-CDN Failover to bypass PiAPI Base64 size limits."""
         image_array = tensor[0].cpu().numpy()
         image_array = (image_array * 255.0).clip(0, 255).astype(np.uint8)
         pil_image = Image.fromarray(image_array)
@@ -52,19 +53,35 @@ class PiAPI_Kling_Node:
         if pil_image.mode == "RGBA":
             pil_image = pil_image.convert("RGB")
             
-        # SOTA FIX: Aggressive Compression for WAF limits (max 768px matches Kling latent target)
-        max_dim = 768
-        if max(pil_image.size) > max_dim:
-            ratio = max_dim / max(pil_image.size)
-            new_size = (int(pil_image.width * ratio), int(pil_image.height * ratio))
-            pil_image = pil_image.resize(new_size, Image.Resampling.LANCZOS)
-            
         buffer = BytesIO()
-        # Drop quality to 70 and optimize to ensure minimal footprint
-        pil_image.save(buffer, format="JPEG", quality=70, optimize=True)
-        base64_str = base64.b64encode(buffer.getvalue()).decode("utf-8")
-        
-        return f"data:image/jpeg;base64,{base64_str}"
+        pil_image.save(buffer, format="JPEG", quality=90)
+        img_bytes = buffer.getvalue()
+
+        # Route 1: ENVS.SH
+        try:
+            res = requests.post(
+                "https://envs.sh", 
+                files={"file": ("image.jpg", img_bytes, "image/jpeg")}, 
+                timeout=15
+            )
+            if res.status_code == 200:
+                return res.text.strip()
+        except Exception:
+            pass # Silent failover
+
+        # Route 2: UGUU.SE
+        try:
+            res = requests.post(
+                "https://uguu.se/upload.php", 
+                files={"files[]": ("image.jpg", img_bytes, "image/jpeg")}, 
+                timeout=15
+            )
+            if res.status_code == 200:
+                return res.json()["files"][0]["url"]
+        except Exception as e:
+            raise RuntimeError(f"CDN Storage Cluster Failure: All ephemeral routes exhausted. {str(e)}")
+
+        raise RuntimeError("CDN Upload Failed: Unknown routing error.")
 
     def load_video_to_tensor(self, video_path):
         cap = cv2.VideoCapture(video_path)
@@ -127,6 +144,7 @@ class PiAPI_Kling_Node:
         if prompt_scene_3 and prompt_scene_3.strip() and int(duration_scene_3) > 0:
             shots.append({"prompt": prompt_scene_3, "duration": int(duration_scene_3)})
             
+        # Multi-Shot Injection
         if len(shots) > 1:
             total_duration = sum(s["duration"] for s in shots)
             if total_duration > 15:
@@ -137,12 +155,17 @@ class PiAPI_Kling_Node:
             payload["input"]["prompt"] = prompt
             payload["input"]["duration"] = int(duration)
 
+        # Dynamic Edge Offloading (Replaces Base64)
         if last_frame is not None:
-            payload["input"]["image_tail"] = self.encode_tensor_to_base64(last_frame)
+            print("[DW-Node] Offloading last_frame to Edge CDN...")
+            payload["input"]["image_tail"] = self.upload_tensor_to_cdn(last_frame)
+            
         if first_frame is not None:
-            payload["input"]["image"] = self.encode_tensor_to_base64(first_frame)
+            print("[DW-Node] Offloading first_frame to Edge CDN...")
+            payload["input"]["image"] = self.upload_tensor_to_cdn(first_frame)
 
         try:
+            print("[DW-Node] Dispatching Micro-Payload to PiAPI...")
             res = requests.post("https://api.piapi.ai/api/v1/task", headers=headers, json=payload, timeout=30)
             if not res.ok:
                 raise Exception(f"HTTP {res.status_code}: {res.text}")
@@ -151,6 +174,7 @@ class PiAPI_Kling_Node:
             if not task_id:
                 raise Exception(f"Invalid API Response Structure: {res.text}")
             
+            print(f"[DW-Node] Task {task_id} generated. Polling API...")
             while True:
                 time.sleep(12)
                 poll_res = requests.get(f"https://api.piapi.ai/api/v1/task/{task_id}", headers=headers, timeout=15)
@@ -159,10 +183,12 @@ class PiAPI_Kling_Node:
                 
                 if status == "completed":
                     video_url = poll_data.get("data", {}).get("output", {}).get("video_url")
+                    print("[DW-Node] Render Complete! Downloading MP4...")
                     break
                 elif status in ["failed", "canceled"]:
                     raise Exception(f"Task Failed at API Engine Level: {poll_data}")
 
+            # I/O Persistence
             video_bytes = requests.get(video_url, timeout=120).content
             output_dir = folder_paths.get_output_directory()
             target_path = os.path.join(output_dir, f"JBoggo_Kling_v{version}_{task_id}.mp4")
@@ -170,6 +196,7 @@ class PiAPI_Kling_Node:
             with open(target_path, "wb") as f:
                 f.write(video_bytes)
                 
+            # VRAM Handover
             video_tensor = self.load_video_to_tensor(target_path)
             return (video_tensor, target_path,)
             
