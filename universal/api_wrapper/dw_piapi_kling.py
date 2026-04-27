@@ -2,6 +2,8 @@ import os
 import time
 import requests
 import base64
+import cv2
+import torch
 from io import BytesIO
 import numpy as np
 from PIL import Image
@@ -9,8 +11,8 @@ import folder_paths
 
 class PiAPI_Kling_Node:
     """
-    Zero-Dependency Custom Node for PiAPI Kling Integration.
-    Supports Native Multi-Shot Sequencing and Direct Disk I/O.
+    SOTA Zero-Dependency Custom Node for PiAPI Kling Integration.
+    Features: Multi-Shot UI, Direct Disk I/O, and VRAM Tensor Decoding for Post-Production.
     """
     
     @classmethod
@@ -31,8 +33,8 @@ class PiAPI_Kling_Node:
             }
         }
     
-    RETURN_TYPES = ("STRING",)
-    RETURN_NAMES = ("mp4_file_path",)
+    RETURN_TYPES = ("IMAGE", "STRING",)
+    RETURN_NAMES = ("video_frames", "mp4_file_path",)
     FUNCTION = "generate_payload"
     CATEGORY = "DW/Universal/API"
 
@@ -44,8 +46,25 @@ class PiAPI_Kling_Node:
         pil_image.save(buffer, format="JPEG", quality=95)
         return base64.b64encode(buffer.getvalue()).decode("utf-8")
 
+    def load_video_to_tensor(self, video_path):
+        """Decodes MP4 binary into ComfyUI-compatible [F, H, W, C] tensors."""
+        cap = cv2.VideoCapture(video_path)
+        frames = []
+        while True:
+            ret, frame = cap.read()
+            if not ret:
+                break
+            frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            frame = np.array(frame).astype(np.float32) / 255.0
+            frame = torch.from_numpy(frame)
+            frames.append(frame)
+        cap.release()
+        
+        if len(frames) > 0:
+            return torch.stack(frames, dim=0)
+        return None
+
     def generate_payload(self, prompt, duration, aspect_ratio, prompt_scene_2="", duration_scene_2=0, prompt_scene_3="", duration_scene_3=0, first_frame=None, last_frame=None):
-        # Enforcing single source of truth for API credentials
         api_key = os.getenv("PIAPI_API_KEY")
         if not api_key:
             raise ValueError("Authentication Failed: PIAPI_API_KEY environment variable is missing.")
@@ -66,72 +85,57 @@ class PiAPI_Kling_Node:
         }
         
         shots = [{"prompt": prompt, "duration": int(duration)}]
-        
         if prompt_scene_2 and prompt_scene_2.strip() and duration_scene_2 > 0:
             shots.append({"prompt": prompt_scene_2, "duration": int(duration_scene_2)})
-            
         if prompt_scene_3 and prompt_scene_3.strip() and duration_scene_3 > 0:
             shots.append({"prompt": prompt_scene_3, "duration": int(duration_scene_3)})
             
         if len(shots) > 1:
             total_duration = sum(s["duration"] for s in shots)
             if total_duration > 15:
-                raise ValueError(f"Constraint Violation: Multi-shot total duration ({total_duration}s) exceeds the 15-second Kling API limit.")
+                raise ValueError(f"Constraint Violation: Multi-shot total duration ({total_duration}s) exceeds 15s limit.")
             payload["input"]["multi_shots"] = shots
-            print(f"[DW-Nodes] Multi-Shot Mode Engaged: {len(shots)} scenes detected.")
         else:
             payload["input"]["prompt"] = prompt
             payload["input"]["duration"] = int(duration)
-            print("[DW-Nodes] Single-Shot Mode Engaged.")
 
         if last_frame is not None:
             payload["input"]["image_tail"] = self.encode_tensor_to_base64(last_frame)
         if first_frame is not None:
             payload["input"]["image"] = self.encode_tensor_to_base64(first_frame)
 
-        print("[DW-Nodes] Dispatching payload to PiAPI infrastructure...")
-        
         try:
             res = requests.post("https://api.piapi.ai/api/v1/task", headers=headers, json=payload, timeout=30)
             res.raise_for_status()
-            
             task_id = res.json().get("data", {}).get("task_id")
-            if not task_id:
-                raise ValueError(f"Infrastructure Error: Task ID not received. Dump: {res.text}")
-                
-            print(f"[DW-Nodes] Generation task initialized. Task ID: {task_id}")
             
             while True:
                 time.sleep(12)
-                print(f"[DW-Nodes] Polling completion status for task {task_id}...")
-                
                 poll_res = requests.get(f"https://api.piapi.ai/api/v1/task/{task_id}", headers=headers, timeout=15)
-                poll_res.raise_for_status()
                 poll_data = poll_res.json()
-                
                 status = poll_data.get("data", {}).get("status")
                 
                 if status == "completed":
                     video_url = poll_data.get("data", {}).get("output", {}).get("video_url")
                     break
                 elif status in ["failed", "canceled"]:
-                    raise Exception(f"Task aborted by PiAPI upstream. Status: {status} | Dump: {poll_data}")
-            
-            print("[DW-Nodes] Render complete. Serializing MP4 to local disk...")
+                    raise Exception(f"Task failed: {status}")
+
+            # I/O Persistence
             video_bytes = requests.get(video_url, timeout=120).content
+            output_dir = folder_paths.get_output_directory()
+            target_path = os.path.join(output_dir, f"JBoggo_Kling_{task_id}.mp4")
             
-            output_directory = folder_paths.get_output_directory()
-            filename = f"JBoggo_Brand_Kling_{task_id}.mp4"
-            target_path = os.path.join(output_directory, filename)
-            
-            with open(target_path, "wb") as binary_file:
-                binary_file.write(video_bytes)
+            with open(target_path, "wb") as f:
+                f.write(video_bytes)
                 
-            print(f"[DW-Nodes] I/O Operation Successful. Asset saved at: {target_path}")
-            return (target_path,)
+            # VRAM Handover for Post-Production
+            video_tensor = self.load_video_to_tensor(target_path)
+            
+            return (video_tensor, target_path,)
             
         except Exception as e:
-            raise RuntimeError(f"PiAPI Interop Failure: {str(e)}")
+            raise RuntimeError(f"Interop Failure: {str(e)}")
 
 NODE_CLASS_MAPPINGS = {"PiAPI_Kling_Node": PiAPI_Kling_Node}
 NODE_DISPLAY_NAME_MAPPINGS = {"PiAPI_Kling_Node": "PiAPI Kling 3.0 (DW)"}
