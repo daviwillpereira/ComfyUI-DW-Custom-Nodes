@@ -101,7 +101,8 @@ class PiAPI_Kling_Node:
         if any(v != 0.0 for v in [camera_zoom, camera_pan_x, camera_pan_y]):
             payload["input"]["camera_control"] = {"type": "simple", "config": {"zoom": float(camera_zoom), "pan_x": float(camera_pan_x), "pan_y": float(camera_pan_y)}}
             
-        if first_frame is None and last_frame is None: payload["input"]["aspect_ratio"] = aspect_ratio
+        if first_frame is None and last_frame is None: 
+            payload["input"]["aspect_ratio"] = aspect_ratio
 
         shots = [{"prompt": prompt, "duration": int(duration)}]
         if prompt_scene_2 and prompt_scene_2.strip() and int(duration_scene_2) > 0: shots.append({"prompt": prompt_scene_2, "duration": int(duration_scene_2)})
@@ -118,11 +119,11 @@ class PiAPI_Kling_Node:
 
         if last_frame is not None:
             print("[DW-Node] Offloading last_frame to Edge CDN...")
-            payload["input"]["image_tail"] = self.upload_tensor_to_cdn(last_frame)
+            payload["input"]["image_tail_url"] = self.upload_tensor_to_cdn(last_frame)
             
         if first_frame is not None:
             print("[DW-Node] Offloading first_frame to Edge CDN...")
-            payload["input"]["image"] = self.upload_tensor_to_cdn(first_frame)
+            payload["input"]["image_url"] = self.upload_tensor_to_cdn(first_frame)
 
         try:
             print("[DW-Node] Dispatching Micro-Payload to PiAPI...")
