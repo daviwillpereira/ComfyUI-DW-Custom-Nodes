@@ -1,4 +1,5 @@
 import os
+import json
 import time
 import requests
 import base64
@@ -39,10 +40,10 @@ class PiAPI_Kling_Node:
             }
         }
     
-    RETURN_TYPES = ("IMAGE", "STRING",)
-    RETURN_NAMES = ("video_frames", "mp4_file_path",)
-    FUNCTION = "generate_payload"
-    CATEGORY = "DW/Universal/API"
+    RETURN_TYPES = ("IMAGE", "STRING", "STRING",)
+    RETURN_NAMES = ("video", "video_path", "json_request",)
+    FUNCTION = "generate"
+    CATEGORY = "JBoggo/Video"
 
     def upload_tensor_to_cdn(self, tensor):
         image_array = tensor[0].cpu().numpy()
@@ -84,10 +85,11 @@ class PiAPI_Kling_Node:
         if len(frames) > 0: return torch.stack(frames, dim=0)
         return None
 
-    def generate_payload(self, prompt, negative_prompt, version, mode, duration, aspect_ratio, prompt_scene_2="", duration_scene_2=0, prompt_scene_3="", duration_scene_3=0, first_frame=None, last_frame=None, camera_zoom=0.0, camera_pan_x=0.0, camera_pan_y=0.0):
+    def generate(self, prompt, negative_prompt, version, mode, duration, aspect_ratio, prompt_scene_2="", duration_scene_2=0, prompt_scene_3="", duration_scene_3=0, first_frame=None, last_frame=None, camera_zoom=0.0, camera_pan_x=0.0, camera_pan_y=0.0):
         api_key = os.getenv("PIAPI_API_KEY")
         if not api_key: raise ValueError("Authentication Failed: PIAPI_API_KEY environment variable is missing.")
 
+        api_url = "https://api.piapi.ai/api/v1/task"
         headers = {"x-api-key": api_key, "Content-Type": "application/json", "Accept": "application/json"}
 
         payload = {
@@ -125,33 +127,34 @@ class PiAPI_Kling_Node:
             print("[DW-Node] Offloading first_frame to Edge CDN...")
             payload["input"]["image_url"] = self.upload_tensor_to_cdn(first_frame)
 
+        json_request_text = json.dumps(payload, indent=4)
+        print(f"[DW-Node] Sending Payload: {json_request_text}")
+        
         try:
             print("[DW-Node] Dispatching Micro-Payload to PiAPI...")
-            res = requests.post("https://api.piapi.ai/api/v1/task", headers=headers, json=payload, timeout=30)
-            if not res.ok: raise Exception(f"HTTP {res.status_code}: {res.text}")
-                
-            task_id = res.json().get("data", {}).get("task_id")
-            if not task_id: raise Exception(f"Invalid API Response Structure: {res.text}")
-            
+            response = requests.post(api_url, headers=headers, json=payload, timeout=60)
+            res_data = response.json()
+
+            if res_data.get("code") != 200:
+                raise Exception(f"API Error: {res_data.get('message')} | Data: {json_request_text}")
+
+            task_id = res_data["data"]["task_id"]
             print(f"[DW-Node] Task {task_id} generated. Polling API...")
+
+            video_url = None
             while True:
-                time.sleep(12)
-                poll_res = requests.get(f"https://api.piapi.ai/api/v1/task/{task_id}", headers=headers, timeout=15)
-                poll_data = poll_res.json()
+                time.sleep(10)
+                poll_resp = requests.get(f"https://api.piapi.ai/api/v1/task/{task_id}", headers=headers, timeout=60)
+                poll_data = poll_resp.json()
                 status = poll_data.get("data", {}).get("status")
                 
                 if status == "completed":
-                    # SOTA FIX: Fallback parsing to catch both Kling 1.5 ("video_url") and Kling 3.0 ("video") payload schemas
                     output_data = poll_data.get("data", {}).get("output", {})
                     video_url = output_data.get("video") or output_data.get("video_url")
-                    
-                    if not video_url:
-                        raise Exception(f"Parser Error: Could not locate MP4 URL in API response: {output_data}")
-                        
                     print("[DW-Node] Render Complete! Downloading MP4...")
                     break
                 elif status in ["failed", "canceled"]:
-                    raise Exception(f"Task Failed at API Engine Level: {poll_data}")
+                    raise Exception(f"Task Failed: {poll_data}")
 
             video_bytes = requests.get(video_url, timeout=120).content
             output_dir = folder_paths.get_output_directory()
@@ -161,10 +164,12 @@ class PiAPI_Kling_Node:
                 f.write(video_bytes)
                 
             video_tensor = self.load_video_to_tensor(target_path)
-            return (video_tensor, target_path,)
+            
+            return (video_tensor, target_path, json_request_text)
             
         except Exception as e:
-            raise RuntimeError(f"Interop Failure: {str(e)}")
+            print(f"[DW-Node] Critical Failure: {str(e)}")
+            raise RuntimeError(f"Interop Failure: {str(e)} | JSON Sent: {json_request_text}")
 
 NODE_CLASS_MAPPINGS = {"PiAPI_Kling_Node": PiAPI_Kling_Node}
 NODE_DISPLAY_NAME_MAPPINGS = {"PiAPI_Kling_Node": "PiAPI Kling Ultimate Multi-Shot (DW)"}
