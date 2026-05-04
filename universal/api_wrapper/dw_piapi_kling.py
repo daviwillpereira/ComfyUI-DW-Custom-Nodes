@@ -23,7 +23,7 @@ class PiAPI_Kling_Node:
                 "negative_prompt": ("STRING", {"multiline": True, "default": "bad quality, blurry, deformed"}),
                 "version": (["3.0", "1.5"], {"default": "3.0"}),
                 "mode": (["std", "pro"], {"default": "std"}),
-                "duration": (["5", "10"], {"default": "5"}),
+                "duration": ("INT", {"default": 5, "min": 3, "max": 15, "step": 1}),
                 "aspect_ratio": (["16:9", "9:16", "1:1"], {"default": "9:16"}),
             },
             "optional": {
