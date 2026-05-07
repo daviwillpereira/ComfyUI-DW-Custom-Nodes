@@ -119,6 +119,10 @@ class PiAPI_Kling_Node:
             payload["input"]["prompt"] = prompt
             payload["input"]["duration"] = int(duration)
 
+        # --- Pre-Flight Validation ---
+        if last_frame is not None and first_frame is None:
+            raise ValueError("Validation Error: PiAPI schema requires 'first_frame' (image_url) to initialize tensors. Standalone 'last_frame' (image_tail_url) is strictly forbidden by upstream API.")
+
         if last_frame is not None:
             print("[DW-Node] Offloading last_frame to Edge CDN...")
             payload["input"]["image_tail_url"] = self.upload_tensor_to_cdn(last_frame)
