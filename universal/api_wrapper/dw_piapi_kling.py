@@ -47,9 +47,8 @@ class PiAPI_Kling_Node:
 
     def upload_tensor_to_cdn(self, tensor):
         """
-        Forces a Base64 Data URI to entirely bypass external CDNs.
-        This prevents connection timeouts from the Great Firewall of China (GFW)
-        when Kuaishou (Kling) workers attempt to fetch the image.
+        Uploads the tensor strictly to Catbox.moe (SOTA resilient CDN).
+        Base64 Data URIs are forbidden to prevent JSON payload size limits (HTTP 413) on PiAPI gateways.
         """
         image_array = tensor[0].cpu().numpy()
         image_array = (image_array * 255.0).clip(0, 255).astype(np.uint8)
@@ -59,12 +58,24 @@ class PiAPI_Kling_Node:
             pil_image = pil_image.convert("RGB")
             
         buffer = BytesIO()
-        pil_image.save(buffer, format="JPEG", quality=90)
+        # Compressed to 85 to optimize network latency and guarantee fast CDN writes
+        pil_image.save(buffer, format="JPEG", quality=85)
         img_bytes = buffer.getvalue()
 
-        base64_encoded = base64.b64encode(img_bytes).decode('utf-8')
-        return f"data:image/jpeg;base64,{base64_encoded}"
-
+        try:
+            res = requests.post(
+                "https://catbox.moe/user/api.php", 
+                data={"reqtype": "fileupload"}, 
+                files={"fileToUpload": ("image.jpg", img_bytes, "image/jpeg")}, 
+                timeout=30
+            )
+            if res.status_code == 200: 
+                return res.text.strip()
+            else:
+                raise RuntimeError(f"Catbox HTTP {res.status_code}: {res.text}")
+        except Exception as e: 
+            raise RuntimeError(f"CDN Storage Cluster Failure. Cannot dispatch to API without a valid URL. Error: {str(e)}")
+        
     def load_video_to_tensor(self, video_path):
         cap = cv2.VideoCapture(video_path)
         frames = []
