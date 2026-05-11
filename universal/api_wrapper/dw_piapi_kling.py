@@ -47,9 +47,9 @@ class PiAPI_Kling_Node:
 
     def upload_tensor_to_cdn(self, tensor):
         """
-        Converts the local image tensor and uploads it to a resilient SOTA CDN.
-        Strictly avoids uguu.se due to aggressive anti-scraper firewalls that cause downstream API task failures.
-        Implements a Base64 Data URI fallback if all external network routes fail.
+        Forces a Base64 Data URI to entirely bypass external CDNs.
+        This prevents connection timeouts from the Great Firewall of China (GFW)
+        when Kuaishou (Kling) workers attempt to fetch the image.
         """
         image_array = tensor[0].cpu().numpy()
         image_array = (image_array * 255.0).clip(0, 255).astype(np.uint8)
@@ -62,33 +62,6 @@ class PiAPI_Kling_Node:
         pil_image.save(buffer, format="JPEG", quality=90)
         img_bytes = buffer.getvalue()
 
-        try:
-            # Primary Route: Catbox.moe (Highly resilient infrastructure for automated API pipelines)
-            res = requests.post(
-                "https://catbox.moe/user/api.php", 
-                data={"reqtype": "fileupload"}, 
-                files={"fileToUpload": ("image.jpg", img_bytes, "image/jpeg")}, 
-                timeout=20
-            )
-            if res.status_code == 200: 
-                return res.text.strip()
-        except Exception: 
-            pass 
-
-        try:
-            # Secondary Route: envs.sh (Ephemeral fallback)
-            res = requests.post(
-                "https://envs.sh", 
-                files={"file": ("image.jpg", img_bytes, "image/jpeg")}, 
-                timeout=20
-            )
-            if res.status_code == 200: 
-                return res.text.strip()
-        except Exception:
-            pass
-
-        # Tertiary Route: Base64 Data URI (Zero network latency, bypasses all CDNs and firewalls)
-        # Injected directly into the JSON payload if upstream APIs support data URIs.
         base64_encoded = base64.b64encode(img_bytes).decode('utf-8')
         return f"data:image/jpeg;base64,{base64_encoded}"
 
