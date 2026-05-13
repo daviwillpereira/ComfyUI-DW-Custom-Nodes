@@ -47,9 +47,14 @@ class PiAPI_Kling_Node:
 
     def upload_tensor_to_cdn(self, tensor):
         """
-        Uploads the tensor strictly to Catbox.moe (SOTA resilient CDN).
-        Base64 Data URIs are forbidden to prevent JSON payload size limits (HTTP 413) on PiAPI gateways.
+        Robust Multi-CDN Uploader (Hydra Routing) to bypass datacenter IP blocks and timeouts.
+        Base64 is strictly forbidden to avoid 1MB JSON payload limits on PiAPI gateways.
         """
+        import requests
+        from io import BytesIO
+        from PIL import Image
+        import numpy as np
+
         image_array = tensor[0].cpu().numpy()
         image_array = (image_array * 255.0).clip(0, 255).astype(np.uint8)
         pil_image = Image.fromarray(image_array)
@@ -58,23 +63,39 @@ class PiAPI_Kling_Node:
             pil_image = pil_image.convert("RGB")
             
         buffer = BytesIO()
-        # Compressed to 85 to optimize network latency and guarantee fast CDN writes
         pil_image.save(buffer, format="JPEG", quality=85)
         img_bytes = buffer.getvalue()
 
+        errors = []
+
+        # Route 1: envs.sh (Fastest, very script-friendly, rarely blocks IPs)
         try:
-            res = requests.post(
-                "https://catbox.moe/user/api.php", 
-                data={"reqtype": "fileupload"}, 
-                files={"fileToUpload": ("image.jpg", img_bytes, "image/jpeg")}, 
-                timeout=30
-            )
-            if res.status_code == 200: 
+            res = requests.post("https://envs.sh", files={"file": ("image.jpg", img_bytes, "image/jpeg")}, timeout=15)
+            if res.status_code == 200:
+                url = res.text.strip()
+                if url.startswith("http"):
+                    return url
+        except Exception as e:
+            errors.append(f"envs.sh failed: {str(e)}")
+
+        # Route 2: Uguu.se (Standard fallback)
+        try:
+            res = requests.post("https://uguu.se/upload.php", files={"files[]": ("image.jpg", img_bytes, "image/jpeg")}, timeout=15)
+            if res.status_code == 200:
+                return res.json()["files"][0]["url"]
+        except Exception as e:
+            errors.append(f"uguu.se failed: {str(e)}")
+
+        # Route 3: Catbox.moe (Current one, likely timing out)
+        try:
+            res = requests.post("https://catbox.moe/user/api.php", data={"reqtype": "fileupload"}, files={"fileToUpload": ("image.jpg", img_bytes, "image/jpeg")}, timeout=15)
+            if res.status_code == 200:
                 return res.text.strip()
-            else:
-                raise RuntimeError(f"Catbox HTTP {res.status_code}: {res.text}")
-        except Exception as e: 
-            raise RuntimeError(f"CDN Storage Cluster Failure. Cannot dispatch to API without a valid URL. Error: {str(e)}")
+        except Exception as e:
+            errors.append(f"catbox.moe failed: {str(e)}")
+
+        # If all routes fail, crash gracefully with a log
+        raise RuntimeError(f"CDN Storage Cluster Failure. All ephemeral routes exhausted. Connection Errors: {errors}")
         
     def load_video_to_tensor(self, video_path):
         cap = cv2.VideoCapture(video_path)
